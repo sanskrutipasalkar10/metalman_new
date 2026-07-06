@@ -240,7 +240,7 @@ def generate_fitment_check_sheet(
             ws.delete_rows(current_row, rows_to_delete)
 
         wb.save(output_path)
-        print(f"[fitment_generator] COMPLETE → {output_path}")
+        print(f"[fitment_generator] COMPLETE -> {output_path}")
         return True
 
     except Exception as e:

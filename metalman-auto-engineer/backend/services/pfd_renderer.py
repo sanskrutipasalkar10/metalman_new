@@ -10,6 +10,7 @@ from openpyxl.drawing.image import Image as ExcelImage
 import cv2
 import numpy as np
 from openpyxl.styles import PatternFill, Font
+from utils.image_utils import fit_image_dimensions
 
 # Standard process symbol color (Soft Green) - Increased size for visibility
 GREEN_FONT = Font(color='00B050', bold=True, size=28)
@@ -319,6 +320,7 @@ def extract_step_parts_with_ocp(master_step_file, routing_matrix, output_dir):
         from OCP.STEPControl import STEPControl_Writer, STEPControl_AsIs
         from OCP.TCollection import TCollection_AsciiString, TCollection_ExtendedString
         from OCP.TDocStd import TDocStd_Document
+        from OCP.TopLoc import TopLoc_Location
 
         print("   [CAD-OCP] Starting pythonOCC/OCP STEP extraction (FreeCAD alternative)...", flush=True)
 
@@ -355,30 +357,43 @@ def extract_step_parts_with_ocp(master_step_file, routing_matrix, output_dir):
                 pass
             return ""
 
-        def _traverse(label, depth=0):
+        def _traverse(label, accumulated_loc, depth=0):
+            # A "referred" label (the shared/prototype part definition) stores
+            # its shape in its own local design frame. The actual position of
+            # this *instance* within the assembly lives on the component
+            # label that points to it (read below, before recursing) - so we
+            # thread that transform down through the recursion and apply it
+            # here. Without this, every part renders at its local origin
+            # instead of its true assembly position (parts float apart /
+            # "explode" instead of staying connected).
             name = _get_label_name(label)
             # Static methods in OCP 7.8 use _s suffix
             if XCAFDoc_ShapeTool.IsShape_s(label):
                 shape = XCAFDoc_ShapeTool.GetShape_s(label)
                 if not shape.IsNull() and name:
-                    name_to_shapes.setdefault(name, []).append(shape)
+                    positioned_shape = shape.Moved(accumulated_loc)
+                    name_to_shapes.setdefault(name, []).append(positioned_shape)
 
             components = TDF_LabelSequence()
             XCAFDoc_ShapeTool.GetComponents_s(label, components)
             for i in range(1, components.Length() + 1):
                 comp_lbl = components.Value(i)
+                comp_loc = XCAFDoc_ShapeTool.GetLocation_s(comp_lbl)
+                child_loc = accumulated_loc.Multiplied(comp_loc)
                 referred = TDF_Label()
                 if XCAFDoc_ShapeTool.GetReferredShape_s(comp_lbl, referred):
-                    _traverse(referred, depth + 1)
+                    _traverse(referred, child_loc, depth + 1)
                 else:
-                    _traverse(comp_lbl, depth + 1)
+                    _traverse(comp_lbl, child_loc, depth + 1)
 
         free_shapes = TDF_LabelSequence()
         shape_tool.GetFreeShapes(free_shapes)
         print(f"   [CAD-OCP] Top-level shapes in assembly: {free_shapes.Length()}", flush=True)
 
         for i in range(1, free_shapes.Length() + 1):
-            _traverse(free_shapes.Value(i))
+            top_label = free_shapes.Value(i)
+            top_loc = XCAFDoc_ShapeTool.GetLocation_s(top_label)
+            _traverse(top_label, top_loc)
 
         all_names = list(name_to_shapes.keys())
         print(f"   [CAD-OCP] Total named parts found: {len(all_names)}", flush=True)
@@ -416,7 +431,7 @@ def extract_step_parts_with_ocp(master_step_file, routing_matrix, output_dir):
             writer.Transfer(compound, STEPControl_AsIs)
             writer.Write(str(output_file))
 
-            print(f"   [CAD-OCP] Exported stage '{stage_name}' → {os.path.basename(output_file)}", flush=True)
+            print(f"   [CAD-OCP] Exported stage '{stage_name}' -> {os.path.basename(output_file)}", flush=True)
             exported_count += 1
 
         print(f"   [CAD-OCP] Done. Exported {exported_count}/{len(valid_routing)} stages.", flush=True)
@@ -449,7 +464,7 @@ def generate_cad_images(routing_matrix, master_step_file, output_dir):
         if not FREECAD_CMD:
             print("   [CAD] ERROR: OCP extraction failed and FreeCAD not found. Skipping CAD rendering.")
             return
-        print("   [CAD] OCP extraction failed — falling back to FreeCAD subprocess...", flush=True)
+        print("   [CAD] OCP extraction failed - falling back to FreeCAD subprocess...", flush=True)
         _generate_cad_images_freecad(valid_routing, abs_master, abs_output_dir)
     
     # ── Render PNGs for whatever temp STEP files were produced ────────────────
@@ -564,9 +579,11 @@ def write_sub_assy_index(assy_data, pfd_template, pfd_output, output_dir):
         
         if os.path.exists(image_path):
             img = ExcelImage(image_path)
-            sheet.row_dimensions[current_row].height = 142
-            sheet.column_dimensions['F'].width = 35
-            img.width, img.height = 190, 140 
+            sheet.row_dimensions[current_row].height = 168
+            sheet.column_dimensions['F'].width = 40
+            # Larger fit box so tall portrait crops aren't squeezed thin -
+            # aspect ratio is still preserved, they just fill more of the cell.
+            img.width, img.height = fit_image_dimensions(image_path, 210, 220)
             sheet.add_image(img, f'F{current_row}')
         else:
             sheet.row_dimensions[current_row].height = 25 

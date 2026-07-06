@@ -4,7 +4,25 @@ from fastapi.staticfiles import StaticFiles
 from api import routes, auth
 from database import engine, SessionLocal
 import models
+import logging
+import sys
 from passlib.context import CryptContext
+
+# ── Logging ──────────────────────────────────────────────────────────────────
+# Force all print() / logging calls to appear immediately in the terminal.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S",
+    stream=sys.stdout,
+)
+logging.getLogger("uvicorn").setLevel(logging.INFO)
+logging.getLogger("uvicorn.access").setLevel(logging.INFO)
+logging.getLogger("uvicorn.error").setLevel(logging.INFO)
+# Make sure stdout is unbuffered so print() shows up immediately
+import functools
+print = functools.partial(print, flush=True)
+# ─────────────────────────────────────────────────────────────────────────────
 
 # Create tables
 models.Base.metadata.create_all(bind=engine)
@@ -89,6 +107,37 @@ async def root():
 
 if __name__ == "__main__":
     import uvicorn
-    # Set reload=False by default to avoid recursive 'spawn' crashes on Windows 
-    # during long-running background tasks that modify files.
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)
+    import socket
+
+    def find_free_port(start_port: int) -> int:
+        current_port = start_port
+        while current_port < 65535:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                try:
+                    s.bind(("0.0.0.0", current_port))
+                    return current_port
+                except OSError:
+                    current_port += 1
+        return start_port
+
+    base_port = int(os.environ.get("PORT", 8001))
+    port = find_free_port(base_port)
+
+    # Write port configuration to the frontend's local development environment file
+    # This enables Vite to hot-reload and connect to the correct backend port automatically.
+    try:
+        frontend_env_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend", ".env.development.local"))
+        with open(frontend_env_path, "w") as f:
+            f.write(f"VITE_API_URL=http://127.0.0.1:{port}\n")
+        print(f"Automatically configured frontend .env.development.local with VITE_API_URL=http://127.0.0.1:{port}")
+    except Exception as e:
+        print(f"Could not update frontend local env file: {e}")
+
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=port,
+        reload=False,
+        log_level="info",
+        access_log=True,
+    )

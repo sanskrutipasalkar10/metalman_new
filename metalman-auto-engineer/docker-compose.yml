@@ -1,40 +1,30 @@
-version: '3.8'
-
 services:
   backend:
-    build: 
+    build:
       context: ./backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      - DATABASE_URL=sqlite:////data/metalman.db
+    volumes:
+      - backend_data:/data
     ports:
       - "8000:8000"
-    volumes:
-      - ./backend:/app
-      - ./temp_cad:/app/temp_cad
-    environment:
-      - REDIS_URL=redis://redis:6379/0
-    depends_on:
-      - redis
 
   frontend:
     build:
       context: ./frontend
-    ports:
-      - "5173:5173"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-
-  redis:
-    image: redis:alpine
-    ports:
-      - "6379:6379"
-
-  worker:
-    build:
-      context: ./backend
-    command: celery -A worker.tasks worker --loglevel=info
-    volumes:
-      - ./backend:/app
-    environment:
-      - REDIS_URL=redis://redis:6379/0
+      args:
+        # Empty = same-origin relative requests through the Nginx reverse
+        # proxy below (see nginx.conf). Override only if you split the
+        # frontend/backend across different hosts.
+        VITE_API_URL: ""
+    restart: unless-stopped
     depends_on:
-      - redis
+      - backend
+    ports:
+      - "80:80"
+
+volumes:
+  backend_data:

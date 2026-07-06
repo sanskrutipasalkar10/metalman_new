@@ -1,3 +1,4 @@
+import os
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
@@ -10,7 +11,9 @@ from models import User, Role
 
 router = APIRouter()
 
-SECRET_KEY = "metalman_secret_key" 
+# Falls back to the previous hardcoded value so local/dev behavior is
+# unchanged; set JWT_SECRET_KEY in production (e.g. the Oracle VM's .env).
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", "metalman_secret_key")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 480 # 8 hours
 

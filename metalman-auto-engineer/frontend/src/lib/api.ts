@@ -1,9 +1,13 @@
 /**
  * Central API configuration.
  * In production (Vercel), VITE_API_URL is set to the Render backend URL.
- * In development, it falls back to localhost:8000.
+ * In a single-VM Docker deployment (Nginx reverse-proxying /api to the
+ * backend on the same origin), VITE_API_URL is built as an explicit empty
+ * string so requests stay relative - `??` (not `||`) preserves that empty
+ * string instead of falling back to the dev default below.
+ * In development, it falls back to localhost:8001.
  */
-export const API_BASE = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+export const API_BASE = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8001";
 
 /**
  * Retry options for fetchWithRetry.

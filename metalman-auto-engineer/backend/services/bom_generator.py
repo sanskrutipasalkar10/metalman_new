@@ -12,17 +12,8 @@ from openpyxl.drawing.image import Image as ExcelImage
 import cv2
 import numpy as np
 import datetime
-from openai import OpenAI
-
-# Initialize the OpenAI client pointing to the OLLAMA_BASE_URL.
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
-OLLAMA_API_KEY = "ollama"  
-VISION_MODEL = "gemma4:31b-cloud" 
-
-client = OpenAI(
-    base_url=OLLAMA_BASE_URL,
-    api_key=OLLAMA_API_KEY
-)
+from utils.image_utils import fit_image_dimensions
+from services.ai_provider import get_vision_completion
 
 def encode_image(pil_img):
     buffered = io.BytesIO()
@@ -54,7 +45,8 @@ def isolate_part_and_remove_text(image_path, output_filename, target_cx, target_
     
     for cnt in contours_raw:
         x, y, w_box, h_box = cv2.boundingRect(cnt)
-        if w_box > 45 or h_box > 45:
+        # Lower threshold to 35px so small details like rubber beading are detected
+        if w_box > 35 or h_box > 35:
             cv2.drawContours(clean_mask, [cnt], -1, 255, thickness=cv2.FILLED)
 
     kernel = np.ones((12, 12), np.uint8) 
@@ -89,9 +81,23 @@ def isolate_part_and_remove_text(image_path, output_filename, target_cx, target_
 
     if best_box:
         x, y, w_box, h_box = best_box
-        pad = 15 
-        x_start, y_start = max(0, x - pad), max(0, y - pad)
-        x_end, y_end = min(w, x + w_box + pad), min(h, y + h_box + pad)
+        # Larger padding (25px) ensures narrow/thin parts aren't clipped
+        pad = 25
+        # Also enforce a minimum crop size (120px) so tiny parts still get a visible cell
+        min_crop = 120
+        x_start = max(0, x - pad)
+        y_start = max(0, y - pad)
+        x_end   = min(w, x + w_box + pad)
+        y_end   = min(h, y + h_box + pad)
+        # Expand to minimum crop size centred on the box
+        if (x_end - x_start) < min_crop:
+            cx = (x_start + x_end) // 2
+            x_start = max(0, cx - min_crop // 2)
+            x_end   = min(w, cx + min_crop // 2)
+        if (y_end - y_start) < min_crop:
+            cy_box = (y_start + y_end) // 2
+            y_start = max(0, cy_box - min_crop // 2)
+            y_end   = min(h, cy_box + min_crop // 2)
         final_cropped = img[y_start:y_end, x_start:x_end]
         cv2.imwrite(output_filename, final_cropped)
         print(f"   SUCCESS: Clean surgical extraction saved -> {output_filename}")
@@ -132,46 +138,29 @@ def extract_isometric_view(pdf_path, output_image_path, grid_size=10):
                 draw.text((text_x, text_y), grid_label, fill=(0, 0, 0, 255), 
                           font=font, stroke_width=4, stroke_fill=(255, 255, 255, 255))
 
-        print(f"   Asking {VISION_MODEL} (via Ollama) for coordinates...")
         base64_image = encode_image(gridded_img)
-        
+
         prompt = """
         You are a highly precise machine vision system. Analyze this engineering CAD drawing.
         Find the bounding box that fully encloses exactly ONE 3D isometric (pictorial) view.
-        
+
         CRITICAL RULES:
         1. The 3D isometric view shows depth, angles, and 3D volume.
         2. ANTI-DIMENSION RULE: The 3D isometric view is for visual reference only. It NEVER has dimension lines, arrows, or measurement numbers on it.
         3. STRICTLY IGNORE flat 2D orthographic views (top, front, side views). These are usually covered in dimensions and text.
         4. The isometric view is usually floating in an open space, often in the top-right or bottom-right area.
-        
+
         Output ONLY the top-left grid cell and the bottom-right grid cell separated by a hyphen.
         Do not include any explanation. Example: G2-J5
         """
-        
-        print(f"   [VISION] Calling {VISION_MODEL} for isometric extraction...", flush=True)
+
         import time
         start_t = time.time()
-        
-        response = client.chat.completions.create(
-            model=VISION_MODEL,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_image}"}}
-                    ]
-                }
-            ],
-            temperature=0.0,  
-            top_p=0.1
-        )
-        
+
+        ai_response_text = get_vision_completion(prompt, base64_image).strip()
+
         elapsed = time.time() - start_t
         print(f"   [VISION] AI responded in {elapsed:.2f}s.", flush=True)
-        
-        ai_response_text = response.choices[0].message.content.strip()
         print(f"   [VISION] Raw Response: {ai_response_text}", flush=True)
         match = re.search(r'([A-Z])(\d+)-([A-Z])(\d+)', ai_response_text)
         
@@ -187,11 +176,23 @@ def extract_isometric_view(pdf_path, output_image_path, grid_size=10):
         ai_center_x = ((col_start_idx + col_end_idx + 1) / 2) * cell_w
         ai_center_y = ((row_start_idx + row_end_idx + 1) / 2) * cell_h
         
-        BUFFER = 1
-        crop_left_idx = max(0, col_start_idx - BUFFER)
+        BUFFER = 2  # 2-cell buffer gives enough context around the AI-detected region
+        crop_left_idx  = max(0, col_start_idx - BUFFER)
         crop_right_idx = min(grid_size - 1, col_end_idx + BUFFER)
-        crop_top_idx = max(0, row_start_idx - BUFFER)
+        crop_top_idx   = max(0, row_start_idx - BUFFER)
         crop_bottom_idx = min(grid_size - 1, row_end_idx + BUFFER)
+
+        # Enforce a minimum crop span of 3 cells in each dimension
+        # so thin parts (rubber beading, etc.) aren't clipped to a sliver.
+        MIN_SPAN = 2
+        if (crop_right_idx - crop_left_idx) < MIN_SPAN:
+            extra = MIN_SPAN - (crop_right_idx - crop_left_idx)
+            crop_left_idx  = max(0, crop_left_idx - extra // 2)
+            crop_right_idx = min(grid_size - 1, crop_right_idx + (extra - extra // 2))
+        if (crop_bottom_idx - crop_top_idx) < MIN_SPAN:
+            extra = MIN_SPAN - (crop_bottom_idx - crop_top_idx)
+            crop_top_idx    = max(0, crop_top_idx - extra // 2)
+            crop_bottom_idx = min(grid_size - 1, crop_bottom_idx + (extra - extra // 2))
         
         left, top = crop_left_idx * cell_w, crop_top_idx * cell_h
         right, bottom = (crop_right_idx + 1) * cell_w, (crop_bottom_idx + 1) * cell_h
@@ -423,7 +424,7 @@ def generate_bom_excel(feasibility_file: str, template_path: str, pdf_directory:
             # Image centering: explicitly set dimensions and anchor
             sheet.row_dimensions[current_row].height = 105
             sheet.column_dimensions['F'].width = 25
-            img.width, img.height = 160, 130 # Slightly smaller to ensure fit
+            img.width, img.height = fit_image_dimensions(target_image, 160, 130)
             
             # Center alignment in cell is handled by row/col sizing and image dimensions
             photo_cell = f'F{current_row}'

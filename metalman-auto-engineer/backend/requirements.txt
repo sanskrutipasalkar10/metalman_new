@@ -1,6 +1,7 @@
 fastapi
 uvicorn[standard]
 pandas
+numpy
 python-multipart
 celery
 redis
@@ -11,6 +12,7 @@ Pillow
 openpyxl
 opencv-python-headless
 openai
+google-generativeai
 xlsx2html
 sqlalchemy
 passlib[bcrypt]

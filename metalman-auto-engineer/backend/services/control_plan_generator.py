@@ -11,6 +11,7 @@ import pandas as pd
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.drawing.image import Image as XLImage
+from utils.image_utils import fit_image_dimensions
 
 # ─── SHEET NAMES ──────────────────────────────────────────────────────────────
 SUB_ASSY_SHEET  = "Sub Assmbly Index"
@@ -125,8 +126,11 @@ def process_sub_assy_index_sheet(ws, assy_data, img_dir=""):
                 if os.path.exists(img_path):
                     try:
                         img = XLImage(img_path)
-                        ws.row_dimensions[r].height = 140
-                        img.width, img.height = 180, 130
+                        ws.row_dimensions[r].height = 168
+                        ws.column_dimensions['F'].width = 40
+                        # Larger fit box (aspect preserved) so tall crops fill
+                        # the cell instead of appearing as a thin strip.
+                        img.width, img.height = fit_image_dimensions(img_path, 210, 220)
                         # Center image in Col F (Col 6)
                         ws.add_image(img, ws.cell(r, 6).coordinate)
                     except Exception:
@@ -442,7 +446,7 @@ def process_q_sheetmetal_sheet(ws_out, tmpl_ws, feasibility_path, pfd_output_pat
             if os.path.exists(img_path):
                 try:
                     img = XLImage(img_path)
-                    img.height, img.width = 135, 190
+                    img.width, img.height = fit_image_dimensions(img_path, 190, 135)
                     # Anchor to I (Col 9)
                     ws_out.add_image(img, ws_out.cell(cur_row, 9).coordinate)
                 except Exception as e:
