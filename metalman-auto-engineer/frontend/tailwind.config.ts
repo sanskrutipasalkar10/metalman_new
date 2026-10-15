@@ -118,6 +118,14 @@ export default {
           "0%, 100%": { opacity: "1" },
           "50%": { opacity: "0.6" },
         },
+        "flow-line-y": {
+          "0%": { backgroundPosition: "0 0" },
+          "100%": { backgroundPosition: "0 24px" },
+        },
+        "flow-line-x": {
+          "0%": { backgroundPosition: "0 0" },
+          "100%": { backgroundPosition: "24px 0" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
@@ -125,6 +133,8 @@ export default {
         "fade-in": "fade-in 0.5s ease-out",
         "slide-up": "slide-up 0.6s ease-out",
         "pulse-glow": "pulse-glow 2s ease-in-out infinite",
+        "flow-line-y": "flow-line-y 1s linear infinite",
+        "flow-line-x": "flow-line-x 1s linear infinite",
       },
     },
   },

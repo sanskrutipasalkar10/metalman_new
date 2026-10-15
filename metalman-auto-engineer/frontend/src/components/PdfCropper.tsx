@@ -15,6 +15,8 @@ const PdfCropper = () => {
     const [selection, setSelection] = useState<any>(null);
     const [savedCount, setSavedCount] = useState(0);
     const [isProcessing, setIsProcessing] = useState(false);
+    const [pdfFile, setPdfFile] = useState<File | null>(null);
+    const [isSettingRefImage, setIsSettingRefImage] = useState(false);
     
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const overlayRef = useRef<HTMLCanvasElement>(null);
@@ -25,11 +27,32 @@ const PdfCropper = () => {
     const onFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
         if (file) {
+            setPdfFile(file);
             const loadingTask = pdfjsLib.getDocument(URL.createObjectURL(file));
             const pdfDoc = await loadingTask.promise;
             setPdf(pdfDoc);
             setNumPages(pdfDoc.numPages);
             renderPage(1, pdfDoc, scale);
+        }
+    };
+
+    const setReferenceImage = async () => {
+        if (!pdfFile) return;
+        setIsSettingRefImage(true);
+        try {
+            const formData = new FormData();
+            formData.append('drawing_pdf', pdfFile);
+            const response = await axios.post(`${API_BASE}/api/welding/set-reference-image`, formData);
+            if (response.data.status === 'success') {
+                alert('Reference image set on the check sheet.');
+            } else {
+                alert('Error: ' + response.data.message);
+            }
+        } catch (error: any) {
+            const detail = error?.response?.data?.detail;
+            alert(detail || 'Could not find a reference isometric view in this drawing.');
+        } finally {
+            setIsSettingRefImage(false);
         }
     };
 
@@ -200,7 +223,7 @@ const PdfCropper = () => {
 
             const response = await axios.post(`${API_BASE}/api/save-crop`, formData);
             if (response.data.status === 'success') {
-                setSavedCount(response.data.row - 1);
+                setSavedCount(response.data.sl_no);
                 const ctx = overlayRef.current.getContext('2d');
                 if (ctx) ctx.clearRect(0, 0, overlayRef.current.width, overlayRef.current.height);
                 setSelection(null);
@@ -260,8 +283,27 @@ const PdfCropper = () => {
 
                 <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '20px' }}>
                     <span style={{ fontSize: '0.9rem', color: 'hsl(var(--muted-foreground))' }}>Items: <b style={{ color: 'hsl(var(--primary))' }}>{savedCount}</b></span>
-                    <button 
-                        onClick={captureCrop} 
+                    <button
+                        onClick={setReferenceImage}
+                        disabled={!pdfFile || isSettingRefImage}
+                        title="Locate this drawing's Reference Isometric View and place it in the check sheet's photo row"
+                        style={{
+                            background: '#fff',
+                            color: 'hsl(var(--primary))',
+                            border: '1px solid hsl(var(--primary))',
+                            padding: '10px 20px',
+                            borderRadius: 'var(--radius)',
+                            cursor: pdfFile ? 'pointer' : 'not-allowed',
+                            fontWeight: '600',
+                            whiteSpace: 'nowrap',
+                            flexShrink: 0,
+                            opacity: !pdfFile || isSettingRefImage ? 0.6 : 1,
+                        }}
+                    >
+                        {isSettingRefImage ? 'Locating…' : 'Set Reference Image'}
+                    </button>
+                    <button
+                        onClick={captureCrop}
                         disabled={!selection || isProcessing} 
                         style={{ 
                             background: 'hsl(var(--accent))', 

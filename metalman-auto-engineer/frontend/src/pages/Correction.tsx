@@ -14,7 +14,7 @@ import { API_BASE } from "@/lib/api";
 
 const DOCUMENT_OPTIONS = [
   { value: "bom", label: "Bill of Materials (BOM)" },
-  { value: "pfd", label: "Progressive Flow Diagram (PFD)" },
+  { value: "pfd", label: "Process Flow Diagram (PFD)" },
   { value: "tooling", label: "Tooling List" },
   { value: "fitment", label: "Fitment Checksheet" },
   { value: "pfmea_assembly", label: "PFMEA - Assembly" },

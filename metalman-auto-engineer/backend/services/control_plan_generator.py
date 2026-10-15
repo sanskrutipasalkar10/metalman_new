@@ -6,7 +6,7 @@ Handles all 4 sheets:
   3. Q-Sheetmetal Parts     – dynamic: feasibility + PFD output + dict
   4. T - BOP & Hardwares    – static dict injection
 """
-import os, json, copy, warnings, re
+import os, json, copy, warnings, re, datetime
 import pandas as pd
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -83,6 +83,26 @@ def _clear_below_header(ws, header_end_row):
     # Delete all rows below header_end_row
     if ws.max_row > header_end_row:
         ws.delete_rows(header_end_row + 1, ws.max_row - header_end_row)
+
+def _inject_cp_header_info(ws, part_no=None, part_desc=None):
+    """Overwrite the header cells that are otherwise cloned verbatim from the
+    template - "Part Number latest change level :- <stale>", "PART NAME :- <stale>",
+    and the Date (Orig.)/Date (Rev.) cells, which never get updated per run today."""
+    if part_no:
+        cur = ws.cell(row=10, column=1).value
+        if cur and ":-" in str(cur):
+            prefix = str(cur).split(":-")[0]
+            ws.cell(row=10, column=1).value = f"{prefix}:- {part_no}"
+    if part_desc:
+        cur = ws.cell(row=12, column=1).value
+        if cur and ":-" in str(cur):
+            prefix = str(cur).split(":-")[0]
+            ws.cell(row=12, column=1).value = f"{prefix}:- {part_desc}"
+    today = datetime.datetime.now()
+    if ws.cell(row=8, column=12).value is not None:
+        ws.cell(row=8, column=12).value = today
+    if ws.cell(row=8, column=14).value is not None:
+        ws.cell(row=8, column=14).value = today
 
 # ─── SHEET 1: SUB ASSY INDEX ──────────────────────────────────────────────────
 def process_sub_assy_index_sheet(ws, assy_data, img_dir=""):
@@ -192,7 +212,7 @@ def _load_pfd_ops(pfd_path, sheet_name):
             })
     return groups
 
-def process_assy_sub_assy_sheet(ws_out, tmpl_ws, pfd_path, cp_dict):
+def process_assy_sub_assy_sheet(ws_out, tmpl_ws, pfd_path, cp_dict, part_no=None, part_desc=None):
     HEADER_END_ROW = 18
     _clear_below_header(ws_out, HEADER_END_ROW)
     FOOTER_NOTE_TEXT = "Note :"
@@ -218,7 +238,9 @@ def process_assy_sub_assy_sheet(ws_out, tmpl_ws, pfd_path, cp_dict):
         if mr.max_row <= HEADER_END_ROW:
             try: ws_out.merge_cells(str(mr))
             except Exception: pass
-            
+
+    _inject_cp_header_info(ws_out, part_no, part_desc)
+
     op_groups = _load_pfd_ops(pfd_path, "SUB_ASSY")
     cur = HEADER_END_ROW + 1
     
@@ -371,7 +393,7 @@ def _copy_header(tmpl_ws, out_ws, header_end):
             except Exception:
                 pass
 
-def process_q_sheetmetal_sheet(ws_out, tmpl_ws, feasibility_path, pfd_output_path, cp_dict, img_dir):
+def process_q_sheetmetal_sheet(ws_out, tmpl_ws, feasibility_path, pfd_output_path, cp_dict, img_dir, part_no=None, part_desc=None):
     """
     Build Q-Sheetmetal Parts sheet dynamically.
     """
@@ -389,6 +411,7 @@ def process_q_sheetmetal_sheet(ws_out, tmpl_ws, feasibility_path, pfd_output_pat
 
     # Copy header from template
     _copy_header(tmpl_ws, ws_out, HEADER_END)
+    _inject_cp_header_info(ws_out, part_no, part_desc)
     cur_row = HEADER_END + 1
 
     # Load feasibility
@@ -556,12 +579,25 @@ def _find_t_marker(ws, default=19):
     return default
 
 def _capture_bop_footer(ws, footer_start_row):
+    # NOTE: captures real style objects (font/fill/border/alignment), not the raw
+    # cell._style index - that index is only valid within its own workbook's style
+    # table, and footer_src may now be the *template* workbook (a different one
+    # than the output workbook), so copying the raw index corrupts the output
+    # file's stylesheet on save.
     footer_data, footer_merges = [], []
     for r in range(footer_start_row, ws.max_row + 1):
         row_cells = []
         for c in range(1, 15):
             cell = ws.cell(r, c)
-            row_cells.append({'val': cell.value, 'style': cell._style, 'height': ws.row_dimensions[r].height})
+            row_cells.append({
+                'val': cell.value,
+                'font': copy.copy(cell.font),
+                'fill': copy.copy(cell.fill),
+                'border': copy.copy(cell.border),
+                'alignment': copy.copy(cell.alignment),
+                'number_format': cell.number_format,
+                'height': ws.row_dimensions[r].height,
+            })
         footer_data.append(row_cells)
     for m in list(ws.merged_cells.ranges):
         if m.min_row >= footer_start_row:
@@ -577,31 +613,41 @@ def _redraw_bop_footer(ws, cur_row, footer_data, footer_merges):
         ws.row_dimensions[tgt_r].height = row_data[0]['height']
         for j, ci in enumerate(row_data):
             cell = ws.cell(tgt_r, j + 1)
-            cell.value   = ci['val']
-            cell._style  = ci['style']
+            cell.value         = ci['val']
+            cell.font          = ci['font']
+            cell.fill          = ci['fill']
+            cell.border        = ci['border']
+            cell.alignment     = ci['alignment']
+            cell.number_format = ci['number_format']
     for m in footer_merges:
         _safe_merge(ws, cur_row + m['min_row_off'], m['min_col'], cur_row + m['max_row_off'], m['max_col'])
 
-def process_bop_sheet(ws, bop_data):
+def process_bop_sheet(ws, bop_data, tmpl_ws=None):
     """
     Inject BOP control plan data into T - BOP & Hardwares sheet.
     bop_data: dict with 'processes' list (matches cp_bop_dict.json structure).
+
+    tmpl_ws: the *template* worksheet the footer lives in. `ws` only contains the
+    header rows cloned by transfuse_sheet_structure() - the footer rows below the
+    header were never copied into it, so the footer must be captured from the
+    template, not from `ws` (which is why the T-BOP footer went missing).
     """
     processes = bop_data.get("processes", [])
     t_marker_row = _find_t_marker(ws)
     data_start   = t_marker_row + 1
 
-    # Find footer
+    # Find footer in the template (the only sheet that actually still has it)
+    footer_src = tmpl_ws if tmpl_ws is not None else ws
     footer_start = None
-    for r in range(data_start, ws.max_row + 1):
-        v = str(ws.cell(r, 1).value).upper()
+    for r in range(data_start, footer_src.max_row + 1):
+        v = str(footer_src.cell(r, 1).value).upper()
         if "NOTE" in v or "PREPARED BY" in v:
             footer_start = r
             break
     if not footer_start:
-        footer_start = ws.max_row + 1
+        footer_start = footer_src.max_row + 1
 
-    footer_data, footer_merges = _capture_bop_footer(ws, footer_start)
+    footer_data, footer_merges = _capture_bop_footer(footer_src, footer_start)
     ws.delete_rows(data_start, ws.max_row - data_start + 1)
 
     std = _std_border()
@@ -707,6 +753,8 @@ def generate_control_plan_excel(
     img_dir: str = "",
     assy_data: list = None,
     pfd_img_dir: str = "",
+    part_no: str = None,
+    part_desc: str = None,
 ):
     """
     Generate full Control Plan Excel workbook with all 4 sheets using the Fresh Workbook approach.
@@ -729,13 +777,14 @@ def generate_control_plan_excel(
     if ASSY_ASSY_SHEET in tmpl_wb.sheetnames:
         ws_out = new_wb.create_sheet(ASSY_ASSY_SHEET)
         transfuse_sheet_structure(tmpl_wb[ASSY_ASSY_SHEET], ws_out, header_rows=18)
+        _inject_cp_header_info(ws_out, part_no, part_desc)
         if pfd_output_path and os.path.exists(pfd_output_path):
             assy_dict_path = os.path.join(dict_dir, "assy", "cp_assy_dict.json")
             if os.path.exists(assy_dict_path):
                 with open(assy_dict_path, encoding="utf-8") as f:
                     assy_dict = json.load(f)
                 print("[CP] Processing ASSY_SUB_ASSY sheet...")
-                process_assy_sub_assy_sheet(ws_out, tmpl_wb[ASSY_ASSY_SHEET], pfd_output_path, assy_dict)
+                process_assy_sub_assy_sheet(ws_out, tmpl_wb[ASSY_ASSY_SHEET], pfd_output_path, assy_dict, part_no=part_no, part_desc=part_desc)
 
     # ── Sheet 3: Q-Sheetmetal Parts ───────────────────────────────────────────
     if Q_SM_SHEET in tmpl_wb.sheetnames:
@@ -746,18 +795,19 @@ def generate_control_plan_excel(
             with open(sm_dict_path, encoding="utf-8") as f:
                 sm_dict = json.load(f)
             print("[CP] Processing Q-Sheetmetal Parts sheet...")
-            process_q_sheetmetal_sheet(ws_out, tmpl_wb[Q_SM_SHEET], feasibility_path, pfd_output_path, sm_dict, img_dir)
+            process_q_sheetmetal_sheet(ws_out, tmpl_wb[Q_SM_SHEET], feasibility_path, pfd_output_path, sm_dict, img_dir, part_no=part_no, part_desc=part_desc)
 
     # ── Sheet 4: T-BOP & Hardwares ────────────────────────────────────────────
     if BOP_SHEET in tmpl_wb.sheetnames:
         ws_out = new_wb.create_sheet(BOP_SHEET)
         transfuse_sheet_structure(tmpl_wb[BOP_SHEET], ws_out, header_rows=19)
+        _inject_cp_header_info(ws_out, part_no, part_desc)
         bop_dict_path = os.path.join(dict_dir, "bop", "cp_bop_dict.json")
         if os.path.exists(bop_dict_path):
             with open(bop_dict_path, encoding="utf-8") as f:
                 bop_data = json.load(f)
             print("[CP] Processing T-BOP & Hardwares sheet...")
-            process_bop_sheet(ws_out, bop_data)
+            process_bop_sheet(ws_out, bop_data, tmpl_ws=tmpl_wb[BOP_SHEET])
 
     new_wb.save(output_path)
     print(f"[CP] Clean Control Plan saved -> {output_path}")

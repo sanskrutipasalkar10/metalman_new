@@ -1,25 +1,10 @@
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowRight, Box, FileSpreadsheet, FileOutput, ShieldCheck, Cpu, Zap } from "lucide-react";
+import { ArrowRight, ShieldCheck, Cpu, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Logo } from "@/components/Logo";
-
-const features = [
-  {
-    icon: Box,
-    title: "NPD Geometry Slicing",
-    desc: "Parse master STEP assemblies into isolated operation-wise discrete part geometries automatically for rapid prototyping.",
-  },
-  {
-    icon: ShieldCheck,
-    title: "PPAP Compliance Check",
-    desc: "Validate feasibility matrices against engineering tolerances and BOM constraints for standard-compliant part approval.",
-  },
-  {
-    icon: FileOutput,
-    title: "Automated Tech Docs",
-    desc: "Export shop-ready PFDs, BOMs, and Fixture Master Lists with one click — ready for the shop floor.",
-  },
-];
+import { ProcessDiagram } from "@/components/landing/ProcessDiagram";
+import { WhatIsPpap } from "@/components/landing/WhatIsPpap";
+import { SoftwarePipeline } from "@/components/landing/SoftwarePipeline";
 
 const Index = () => {
   const navigate = useNavigate();
@@ -84,75 +69,15 @@ const Index = () => {
           </div>
 
           {/* Visual panel */}
-          <div className="relative hidden lg:block">
-            <div className="relative aspect-square">
-              <div className="absolute inset-0 rounded-2xl border border-white/10 bg-gradient-to-br from-white/5 to-transparent backdrop-blur-sm" />
-              <div className="absolute inset-6 rounded-xl border border-white/10 bg-slate-deep/40 p-6">
-                <div className="mb-4 flex items-center justify-between text-[10px] uppercase tracking-wider text-white/40">
-                  <span>Job #MX-7741</span>
-                  <span className="flex items-center gap-1.5"><span className="h-1.5 w-1.5 rounded-full bg-success" /> Processing</span>
-                </div>
-                <div className="space-y-3">
-                  {[
-                    { label: "CAD Slice", val: 100, c: "bg-success" },
-                    { label: "Feasibility Parse", val: 100, c: "bg-success" },
-                    { label: "BOM Generate", val: 84, c: "bg-primary-glow" },
-                    { label: "PFD Export", val: 42, c: "bg-accent" },
-                  ].map((row) => (
-                    <div key={row.label}>
-                      <div className="mb-1 flex justify-between text-[11px] text-white/60">
-                        <span>{row.label}</span>
-                        <span className="font-mono">{row.val}%</span>
-                      </div>
-                      <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
-                        <div className={`h-full ${row.c}`} style={{ width: `${row.val}%` }} />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div className="mt-6 grid grid-cols-3 gap-2">
-                  {Array.from({ length: 9 }).map((_, i) => (
-                    <div key={i} className="aspect-square rounded border border-white/10 bg-white/[0.02]" style={{ opacity: 0.3 + (i % 3) * 0.2 }} />
-                  ))}
-                </div>
-              </div>
-            </div>
+          <div className="relative">
+            <ProcessDiagram />
           </div>
         </div>
       </section>
 
-      {/* Features */}
-      <section id="features" className="border-b border-border bg-background py-24">
-        <div className="container">
-          <div className="mx-auto mb-16 max-w-2xl text-center">
-            <div className="mb-4 text-xs font-semibold uppercase tracking-[0.2em] text-primary">Operational Excellence</div>
-            <h2 className="text-balance text-4xl font-bold md:text-5xl">Accelerating the PPAP lifecycle.</h2>
-            <p className="mt-4 text-lg text-muted-foreground">
-              Integrated engineering pipeline designed specifically for Metalman's complex manufacturing requirements.
-            </p>
-          </div>
+      <WhatIsPpap />
 
-          <div className="grid gap-6 md:grid-cols-3">
-            {features.map((f, i) => (
-              <div
-                key={f.title}
-                className="group relative overflow-hidden rounded-xl border border-border bg-card p-8 shadow-card transition-all duration-300 hover:-translate-y-1 hover:border-primary/30 hover:shadow-elevated"
-                style={{ animationDelay: `${i * 100}ms` }}
-              >
-                <div className="absolute right-0 top-0 h-32 w-32 rounded-full bg-primary/5 blur-2xl transition-all group-hover:bg-accent/10" />
-                <div className="relative">
-                  <div className="mb-6 inline-flex h-12 w-12 items-center justify-center rounded-lg bg-secondary text-primary transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
-                    <f.icon className="h-6 w-6" />
-                  </div>
-                  <div className="mb-2 font-mono text-xs font-medium text-muted-foreground">0{i + 1} / 03</div>
-                  <h3 className="mb-3 text-xl font-bold">{f.title}</h3>
-                  <p className="text-sm leading-relaxed text-muted-foreground">{f.desc}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
+      <SoftwarePipeline />
 
       {/* CTA strip */}
       <section className="border-b border-border bg-secondary/40 py-20">

@@ -4,6 +4,7 @@ __pycache__/
 *$py.class
 venv/
 .venv/
+venv310/
 env/
 .env
 
@@ -34,4 +35,5 @@ Thumbs.db
 /metalman-auto-engineer/backend/outputs/
 /metalman-auto-engineer/backend/metalman.db
 /metalman-auto-engineer/backend/tasks_db.json
+/metalman-auto-engineer/backend/upload_retention.json
 /metalman-auto-engineer/frontend/build_log.txt

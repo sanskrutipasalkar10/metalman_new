@@ -12,7 +12,7 @@ from openpyxl.drawing.image import Image as ExcelImage
 import cv2
 import numpy as np
 import datetime
-from utils.image_utils import fit_image_dimensions
+from utils.image_utils import fit_image_dimensions, place_image_centered
 from services.ai_provider import get_vision_completion
 
 def encode_image(pil_img):
@@ -106,6 +106,153 @@ def isolate_part_and_remove_text(image_path, output_filename, target_cx, target_
         print("   FATAL: OpenCV found nothing after cleanup.")
         return False
 
+def _locate_reference_view_box(page, dpi):
+    """
+    Deterministically locate the 'REFERENCE ISOMETRIC VIEW' region via its
+    caption text, when the sheet has one, instead of asking the vision model
+    to guess grid cells.
+
+    Metalman's drawings consistently draw this view directly above its
+    caption. The AI-grid approach below has no way to prefer this specific
+    view over other unlabeled/differently-labeled isometric views on the same
+    sheet (e.g. "RIGHT ISOMETRIC VIEW") - both read as "3D, dimension-free" to
+    the prompt, so it sometimes picked the wrong one. On dense multi-view
+    sheets the fixed 10x10 grid is also too coarse and can miss the target
+    region entirely, returning unrelated content like the sheet's zone-
+    reference border strip. A direct text search for the caption sidesteps
+    both failure modes whenever the caption is present.
+
+    Returns an (left, top, right, bottom) box in PDF points, or None if this
+    page has no such caption (callers should fall back to the AI-grid path).
+    """
+    rects = page.search_for("REFERENCE ISOMETRIC VIEW")
+    if not rects:
+        return None
+    r = rects[0]
+    label_w = r.x1 - r.x0
+    label_h = r.y1 - r.y0
+    # Extend slightly past the caption's own bottom edge (not just up to its
+    # top) - stopping exactly at the view's edge left it touching the crop
+    # boundary on some sheets, which trips isolate_part_and_remove_text's
+    # edge-exclusion filter and can leave a stray small contour (e.g. a bolt
+    # hole) as the only "valid" candidate instead of the real part.
+    box_bottom = r.y1 + label_h * 0.3
+    # Generous upward allowance since the view's true height isn't known -
+    # scaled by label width (proxy for the sheet's text/drawing scale) rather
+    # than label height, and downstream contour isolation trims the excess.
+    # Deliberately kept close to the caption otherwise: sheets can have
+    # unrelated dimensioned detail views sitting just below/beside it, and
+    # pulling those into the box gives the contour isolation step a second,
+    # competing blob to pick instead of the real view.
+    box_top = max(page.rect.y0, box_bottom - label_w * 4.6)
+    box_left = max(page.rect.x0, r.x0 - label_w * 0.9)
+    box_right = min(page.rect.x1, r.x1 + label_w * 0.9)
+    return (box_left, box_top, box_right, box_bottom)
+
+
+def _locate_unlabeled_view_box(page, dpi):
+    """
+    Second-tier fallback for sheets with no 'REFERENCE ISOMETRIC VIEW' caption
+    at all (observed on supplier-drawing templates, e.g. rubber/beading parts
+    sourced from a third party, which use a completely different sheet layout
+    with no caption near the pictorial view). Both Metalman's own template and
+    this supplier template still consistently place the pictorial view in the
+    right-most portion of the sheet, so scanning just that strip for the
+    largest ink blob that doesn't touch the strip's own edges (i.e. isn't
+    part of the sheet's border frame) reliably finds it without an AI call.
+
+    Returns an (left, top, right, bottom) box in PDF points, or None if no
+    suitable candidate is found (caller should fall back to the AI-grid path).
+    """
+    scale = dpi / 72.0
+    pix = page.get_pixmap(dpi=dpi)
+    img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
+    w, h = img.size
+    strip_left_px = int(w * 0.75)
+    strip = img.crop((strip_left_px, 0, w, h))
+    arr = cv2.cvtColor(np.array(strip), cv2.COLOR_RGB2GRAY)
+    sh, sw = arr.shape
+
+    _, thresh = cv2.threshold(arr, 220, 255, cv2.THRESH_BINARY_INV)
+    margin = 15
+    thresh[0:margin, :] = 0
+    thresh[sh - margin:sh, :] = 0
+    thresh[:, 0:margin] = 0
+    thresh[:, sw - margin:sw] = 0
+
+    contours_raw, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    mask = np.zeros_like(thresh)
+    for cnt in contours_raw:
+        x, y, cw, ch = cv2.boundingRect(cnt)
+        if cw > 35 or ch > 35:
+            cv2.drawContours(mask, [cnt], -1, 255, thickness=cv2.FILLED)
+
+    kernel = np.ones((12, 12), np.uint8)
+    dilated = cv2.dilate(mask, kernel, iterations=2)
+    final_contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    best, best_area = None, 0
+    for cnt in final_contours:
+        x, y, cw, ch = cv2.boundingRect(cnt)
+        touches = x <= 5 or y <= 5 or (x + cw) >= (sw - 5) or (y + ch) >= (sh - 5)
+        if touches:
+            continue
+        area = cv2.contourArea(cnt)
+        if area > best_area:
+            best_area, best = area, (x, y, cw, ch)
+
+    if not best:
+        return None
+    x, y, cw, ch = best
+    pad = 30
+    left_px = strip_left_px + max(0, x - pad)
+    top_px = max(0, y - pad)
+    right_px = strip_left_px + min(sw, x + cw + pad)
+    bottom_px = min(h, y + ch + pad)
+    return (left_px / scale, top_px / scale, right_px / scale, bottom_px / scale)
+
+
+def _save_deterministic_crop(page, box, dpi, output_image_path):
+    """
+    Shared by both non-AI localization strategies above: crops the box out of
+    the rendered page, blanks a border-sized band along any side that got
+    clamped to the sheet's own edge, and saves it.
+
+    Whenever a side is clamped flush against the sheet edge, the crop
+    captures the sheet's border frame line running along it. That line is
+    large enough to dominate isolate_part_and_remove_text's contour search
+    (observed: it connected through to the real part and swallowed the whole
+    crop as one blob) - blanking it up front avoids that, since we know a
+    priori that band is just the sheet border, not content.
+
+    Returns the (target_cx, target_cy) center point for the saved crop.
+    """
+    scale = dpi / 72.0
+    pix = page.get_pixmap(dpi=dpi)
+    clean_img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
+    box_left, box_top, box_right, box_bottom = box
+    left, top, right, bottom = box_left * scale, box_top * scale, box_right * scale, box_bottom * scale
+    cropped = clean_img.crop((left, top, right, bottom))
+
+    draw = ImageDraw.Draw(cropped)
+    # Sized to clear Metalman's standard sheet-border rule line (measured
+    # ~72px in from the edge at 200 DPI), not just the zone-reference tick
+    # marks right at the physical edge.
+    BAND = 95
+    cw, ch = cropped.size
+    if box_top <= page.rect.y0 + 0.5:
+        draw.rectangle([0, 0, cw, BAND], fill=(255, 255, 255))
+    if box_left <= page.rect.x0 + 0.5:
+        draw.rectangle([0, 0, BAND, ch], fill=(255, 255, 255))
+    if box_right >= page.rect.x1 - 0.5:
+        draw.rectangle([cw - BAND, 0, cw, ch], fill=(255, 255, 255))
+    if box_bottom >= page.rect.y1 - 0.5:
+        draw.rectangle([0, ch - BAND, cw, ch], fill=(255, 255, 255))
+
+    cropped.save(output_image_path)
+    return (int((right - left) / 2), int((bottom - top) / 2))
+
+
 # ==========================================
 # VISION AGENT SCRIPT: OLLAMA QWEN3-VL
 # ==========================================
@@ -114,9 +261,21 @@ def extract_isometric_view(pdf_path, output_image_path, grid_size=10):
     try:
         doc = fitz.open(pdf_path)
         page = doc.load_page(0)
-        pix = page.get_pixmap(dpi=200) 
+        DPI = 200
+
+        ref_box = _locate_reference_view_box(page, DPI)
+        if ref_box:
+            print("   [VISION] Found 'REFERENCE ISOMETRIC VIEW' caption - using deterministic crop, skipping AI grid.", flush=True)
+            return _save_deterministic_crop(page, ref_box, DPI, output_image_path)
+
+        content_box = _locate_unlabeled_view_box(page, DPI)
+        if content_box:
+            print("   [VISION] No caption found - using content-based right-strip crop, skipping AI grid.", flush=True)
+            return _save_deterministic_crop(page, content_box, DPI, output_image_path)
+
+        pix = page.get_pixmap(dpi=DPI)
         clean_img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
-        
+
         gridded_img = clean_img.copy()
         draw = ImageDraw.Draw(gridded_img, 'RGBA')
         w, h = gridded_img.size
@@ -146,9 +305,16 @@ def extract_isometric_view(pdf_path, output_image_path, grid_size=10):
 
         CRITICAL RULES:
         1. The 3D isometric view shows depth, angles, and 3D volume.
-        2. ANTI-DIMENSION RULE: The 3D isometric view is for visual reference only. It NEVER has dimension lines, arrows, or measurement numbers on it.
-        3. STRICTLY IGNORE flat 2D orthographic views (top, front, side views). These are usually covered in dimensions and text.
-        4. The isometric view is usually floating in an open space, often in the top-right or bottom-right area.
+        2. IDENTIFICATION TEST - apply this to every candidate view before selecting it:
+           first identify the image region that has NO dimension lines, arrows, tolerance
+           values, or measurement numbers linked to it anywhere inside its bounding box.
+           That dimensionless region is the correct 3D isometric view to select and crop.
+           If a region has any dimension line or number touching or overlapping it, it is
+           NOT the isometric view - reject it immediately, even if it looks 3D or angled.
+        3. STRICTLY IGNORE flat 2D orthographic views (top, front, side views). These are
+           always covered in dimension lines, arrows, and measurement text.
+        4. The isometric view is usually floating in an open space, often in the top-right
+           or bottom-right area, clearly separated from the dimensioned 2D views.
 
         Output ONLY the top-left grid cell and the bottom-right grid cell separated by a hyphen.
         Do not include any explanation. Example: G2-J5
@@ -327,14 +493,21 @@ def safe_write_data(sheet, cell_coord, value):
         cell.value = value
 
 
-def generate_bom_excel(feasibility_file: str, template_path: str, pdf_directory: str, tmp_image_directory: str, output_path: str, force_rewrite: bool = True):
+def generate_bom_excel(feasibility_file: str, template_path: str, pdf_directory: str, tmp_image_directory: str, output_path: str, force_rewrite: bool = True, part_no: str = None, part_desc: str = None):
     """
     Main orchestrator for generating the BOM Excel internally, using the extracted data
     and CAD PDFs. Dynamic paths allow execution via FastAPI endpoints.
+
+    part_no/part_desc: canonical identity from routes.py, used in place of this
+    module's own extraction so the header matches every other generated document.
     """
     bom_data, main_part_no, main_part_desc = extract_feasibility_data(feasibility_file)
     if not bom_data:
         return {"status": "error", "message": "Failed to extract feasibility data."}
+    if part_no:
+        main_part_no = part_no
+    if part_desc:
+        main_part_desc = part_desc
 
     print(f"\nBooting Master BOM Injector...", flush=True)
 
@@ -420,15 +593,9 @@ def generate_bom_excel(feasibility_file: str, template_path: str, pdf_directory:
         
         if os.path.exists(target_image):
             print(f"   Injecting Photo into row {current_row}...")
-            img = ExcelImage(target_image)
-            # Image centering: explicitly set dimensions and anchor
             sheet.row_dimensions[current_row].height = 105
             sheet.column_dimensions['F'].width = 25
-            img.width, img.height = fit_image_dimensions(target_image, 160, 130)
-            
-            # Center alignment in cell is handled by row/col sizing and image dimensions
-            photo_cell = f'F{current_row}'
-            sheet.add_image(img, photo_cell)
+            place_image_centered(sheet, target_image, f'F{current_row}', 160, 130)
         else:
             print(f"   No PDF found. Skipping Photo for {part_no}.")
             sheet.row_dimensions[current_row].height = 25 

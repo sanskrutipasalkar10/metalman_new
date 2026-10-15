@@ -10,9 +10,12 @@ Uses the "Fresh Workbook Transfuser" approach:
 
 import os
 import math
+import datetime
 import openpyxl
 from copy import copy
 from openpyxl.styles import Alignment, Font, Border, Side
+
+from utils.part_info import extract_program_code
 
 
 def generate_fixture_plan(
@@ -20,6 +23,8 @@ def generate_fixture_plan(
     template_path,
     output_path,
     month_label=None,   # kept for API compatibility (unused in this approach)
+    part_no=None,
+    part_desc=None,
 ):
     """
     Public API -- called by routes.py.
@@ -29,6 +34,8 @@ def generate_fixture_plan(
         template_path:    Path to 'fixture_plan_template.xlsx' in assets.
         output_path:      Destination path for the generated xlsx.
         month_label:      Unused (template already contains the month cell).
+        part_no/part_desc: canonical identity from routes.py, used to overwrite the
+                           header's stale "MODEL NO :" sample text every run.
 
     Returns:
         True on success, False on failure.
@@ -38,6 +45,8 @@ def generate_fixture_plan(
             feasibility_xlsx=feasibility_path,
             template_xlsx=template_path,
             output_xlsx=output_path,
+            part_no=part_no,
+            part_desc=part_desc,
         )
         return True
     except Exception as e:
@@ -51,7 +60,7 @@ def generate_fixture_plan(
 # CORE ENGINE  (original script logic -- no logic changes, emojis removed)
 # -----------------------------------------------------------------------------
 
-def _generate_transfused_fixture_pm_plan(feasibility_xlsx, template_xlsx, output_xlsx):
+def _generate_transfused_fixture_pm_plan(feasibility_xlsx, template_xlsx, output_xlsx, part_no=None, part_desc=None):
     print("[FP] Initializing Fresh Workbook Transfuser Engine...", flush=True)
 
     # ==========================================
@@ -119,13 +128,18 @@ def _generate_transfused_fixture_pm_plan(feasibility_xlsx, template_xlsx, output
             target_cell.number_format = source_cell.number_format
 
     # TRANSFUSION STEP 1: Copy exact column configurations / widths
+    # Columns 2 (Part Name), 3 (Fixture No), 5 (Fixture Name) hold long free-text
+    # values, so they get a wider floor than the generic 12pt fallback used
+    # elsewhere - otherwise text gets crammed/hidden even with wrap_text on.
+    MIN_DATA_COL_WIDTH = {2: 30, 3: 16, 5: 30}
     for col_idx in range(1, 40): # Scan broad range of columns
         col_letter = openpyxl.utils.get_column_letter(col_idx)
         width = template_ws.column_dimensions[col_letter].width
+        floor = MIN_DATA_COL_WIDTH.get(col_idx, 12)
         if width:
-            output_ws.column_dimensions[col_letter].width = width
+            output_ws.column_dimensions[col_letter].width = max(width, floor)
         else:
-            output_ws.column_dimensions[col_letter].width = 12 # Default visibility
+            output_ws.column_dimensions[col_letter].width = floor # Default visibility
 
     # ==========================================
     # 3. TRANSFUSE HEADER MATRIX (ROWS 1 TO 8)
@@ -156,6 +170,18 @@ def _generate_transfused_fixture_pm_plan(feasibility_xlsx, template_xlsx, output
             new_img.anchor = img.anchor
             output_ws.add_image(new_img)
 
+    # Overwrite the header's "MODEL NO :" / "MONTH :" cells - these are cloned
+    # verbatim from the template above and would otherwise show stale sample
+    # text (e.g. a previous part's model no) on every run.
+    if part_desc:
+        output_ws.cell(row=6, column=1).value = f"MODEL NO : {part_desc}"
+    current_month_label = datetime.datetime.now().strftime("%b-%Y")
+    for r in range(1, 9):
+        for c in range(1, 20):
+            v = output_ws.cell(row=r, column=c).value
+            if isinstance(v, str) and v.strip().upper().startswith("MONTH"):
+                output_ws.cell(row=r, column=c).value = f"MONTH : {current_month_label}"
+
     # ==========================================
     # 4. CAPTURE DATA ZONE STYLE BASELINES
     # ==========================================
@@ -180,10 +206,10 @@ def _generate_transfused_fixture_pm_plan(feasibility_xlsx, template_xlsx, output
         str_fix_name = str(item['fixture_name'] or "")
         str_fix_no   = str(item['fixture_no']   or "")
 
-        # Calculate text breaks based on column layouts
-        lines_part      = math.ceil(len(str_part)     / 24)
+        # Calculate text breaks based on the (now wider) column layouts set above
+        lines_part      = math.ceil(len(str_part)     / 28)
         lines_fix_name  = math.ceil(len(str_fix_name) / 28)
-        lines_fix_no    = math.ceil(len(str_fix_no)   / 22)
+        lines_fix_no    = math.ceil(len(str_fix_no)   / 14)
         explicit_breaks = max(
             str_part.count('\n'),
             str_fix_name.count('\n'),
@@ -191,7 +217,7 @@ def _generate_transfused_fixture_pm_plan(feasibility_xlsx, template_xlsx, output
         ) + 1
 
         max_lines = max(lines_part, lines_fix_name, lines_fix_no, explicit_breaks)
-        output_ws.row_dimensions[current_row].height = max(26, (max_lines * 14) + 12)
+        output_ws.row_dimensions[current_row].height = max(34, (max_lines * 18) + 16)
 
         # Populate raw values
         output_ws.cell(row=current_row, column=1, value=idx)

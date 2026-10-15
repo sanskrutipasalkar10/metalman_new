@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Metalman Auto-Engineer — Functional Architecture</title>
+<style>
+  :root {
+    --paper: #F5F3EE;
+    --paper-raise: #FFFFFF;
+    --ink: #1C2530;
+    --ink-soft: #4B5563;
+    --steel: #1F4E79;
+    --steel-deep: #163B5C;
+    --steel-tint: #E7EEF4;
+    --safety: #C9601F;
+    --safety-tint: #FBEBDF;
+    --line: #D9D3C4;
+    --success: #2F7D5A;
+    --success-tint: #E4F1EA;
+    --warn: #9A6B0C;
+    --warn-tint: #FBF0DA;
+    --mono: "Consolas", "Cascadia Code", "SF Mono", "Roboto Mono", ui-monospace, monospace;
+    --display: "Bahnschrift SemiCondensed", "Bahnschrift", "Arial Narrow", "Segoe UI Semibold", sans-serif;
+    --body: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 15px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  a { color: var(--steel); }
+
+  .wrap {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 0 28px 96px;
+  }
+
+  /* ---------- Title block (modeled on the product's own PFD/BOM header) ---------- */
+
+  .titleblock {
+    margin-top: 28px;
+    border: 1.5px solid var(--ink);
+    background: var(--paper-raise);
+    display: grid;
+    grid-template-columns: 1fr auto;
+  }
+
+  .titleblock-main {
+    padding: 22px 26px;
+    border-right: 1.5px solid var(--ink);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .mark {
+    display: flex;
+    gap: 3px;
+    align-items: flex-end;
+    flex-shrink: 0;
+  }
+  .mark span {
+    width: 0; height: 0;
+    border-left: 9px solid transparent;
+    border-right: 9px solid transparent;
+    border-bottom: 16px solid var(--steel);
+  }
+
+  .titleblock-text h1 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 1.9rem;
+    letter-spacing: 0.01em;
+    margin: 0;
+    color: var(--ink);
+    text-wrap: balance;
+  }
+  .titleblock-text p {
+    margin: 4px 0 0;
+    font-size: 0.92rem;
+    color: var(--ink-soft);
+  }
+
+  .titleblock-meta {
+    display: grid;
+    grid-template-rows: repeat(3, 1fr);
+    font-family: var(--mono);
+    font-size: 0.72rem;
+  }
+  .titleblock-meta div {
+    padding: 6px 16px;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    justify-content: space-between;
+    gap: 18px;
+    min-width: 210px;
+  }
+  .titleblock-meta div:last-child { border-bottom: none; }
+  .titleblock-meta .k { color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.06em; }
+  .titleblock-meta .v { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  /* ---------- Section nav ---------- */
+
+  .secnav {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: rgba(245,243,238,0.94);
+    backdrop-filter: blur(6px);
+    border-bottom: 1px solid var(--line);
+    margin: 0 -28px 40px;
+    padding: 12px 28px;
+  }
+  .secnav-inner {
+    max-width: 1080px;
+    margin: 0 auto;
+    display: flex;
+    gap: 22px;
+    overflow-x: auto;
+  }
+  .secnav a {
+    font-family: var(--mono);
+    font-size: 0.74rem;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--ink-soft);
+    text-decoration: none;
+    white-space: nowrap;
+    padding: 3px 0;
+    border-bottom: 2px solid transparent;
+  }
+  .secnav a:hover { color: var(--steel); border-bottom-color: var(--steel); }
+
+  /* ---------- Section headers ---------- */
+
+  section.doc-section { margin-top: 64px; scroll-margin-top: 74px; }
+  section.doc-section:first-of-type { margin-top: 8px; }
+
+  .sec-head {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    border-bottom: 2px solid var(--ink);
+    padding-bottom: 10px;
+    margin-bottom: 22px;
+  }
+  .sec-num {
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    color: var(--paper);
+    background: var(--steel);
+    padding: 2px 8px;
+    font-weight: 700;
+  }
+  .sec-head h2 {
+    font-family: var(--display);
+    font-size: 1.55rem;
+    font-weight: 700;
+    margin: 0;
+    text-wrap: balance;
+  }
+  .sec-sub {
+    margin-left: auto;
+    font-size: 0.82rem;
+    color: var(--ink-soft);
+    font-style: italic;
+  }
+
+  .lede {
+    font-size: 0.98rem;
+    color: var(--ink-soft);
+    max-width: 66ch;
+    margin: -6px 0 26px;
+  }
+
+  /* ---------- Section 1: Data Flow — PFD-style operation table ---------- */
+
+  .flow-scroll { overflow-x: auto; border: 1px solid var(--ink); }
+  table.flow {
+    width: 100%;
+    min-width: 760px;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+    background: var(--paper-raise);
+  }
+  table.flow thead th {
+    background: var(--steel);
+    color: var(--paper);
+    font-family: var(--display);
+    font-weight: 600;
+    text-align: left;
+    padding: 9px 12px;
+    font-size: 0.76rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-right: 1px solid rgba(255,255,255,0.15);
+  }
+  table.flow tbody td {
+    padding: 10px 12px;
+    border-top: 1px solid var(--line);
+    border-right: 1px solid var(--line);
+    vertical-align: top;
+  }
+  table.flow tbody td:last-child, table.flow thead th:last-child { border-right: none; }
+  table.flow tbody tr.milestone { background: var(--steel-tint); }
+  table.flow tbody tr.milestone td { font-weight: 700; }
+  table.flow tbody tr:hover { background: #FAF8F3; }
+  table.flow tbody tr.milestone:hover { background: var(--steel-tint); }
+
+  .pct {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    color: var(--steel-deep);
+    white-space: nowrap;
+  }
+  .stage-name { font-weight: 700; }
+  .stage-desc { color: var(--ink-soft); }
+  .engine-tag {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    padding: 2px 6px;
+    border-radius: 3px;
+    background: var(--steel-tint);
+    color: var(--steel-deep);
+    margin: 2px 4px 0 0;
+    white-space: nowrap;
+  }
+  .engine-tag.ai { background: var(--safety-tint); color: var(--safety); }
+
+  .flow-legend {
+    display: flex;
+    gap: 22px;
+    flex-wrap: wrap;
+    font-size: 0.76rem;
+    color: var(--ink-soft);
+    margin-top: 10px;
+    font-family: var(--mono);
+  }
+  .flow-legend span.dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--steel); margin-right:6px; }
+
+  .loop-note {
+    margin-top: 26px;
+    border-left: 3px solid var(--steel);
+    background: var(--steel-tint);
+    padding: 14px 18px;
+    font-size: 0.87rem;
+  }
+  .loop-note strong { font-family: var(--display); }
+
+  /* ---------- Section 2: User Journey — numbered sequence ---------- */
+
+  .journey {
+    position: relative;
+    padding-left: 6px;
+  }
+  .journey::before {
+    content: "";
+    position: absolute;
+    left: 21px;
+    top: 10px;
+    bottom: 10px;
+    width: 1.5px;
+    background: var(--line);
+  }
+  .jstep {
+    position: relative;
+    display: grid;
+    grid-template-columns: 44px 1fr;
+    gap: 16px;
+    padding: 16px 0;
+  }
+  .jstep-badge {
+    position: relative;
+    z-index: 1;
+    width: 44px; height: 44px;
+    border-radius: 50%;
+    background: var(--paper-raise);
+    border: 1.5px solid var(--steel);
+    color: var(--steel-deep);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: 0.95rem;
+  }
+  .jstep.branch .jstep-badge { border-color: var(--safety); color: var(--safety); border-style: dashed; }
+  .jstep-body h3 {
+    font-family: var(--display);
+    font-size: 1.05rem;
+    margin: 5px 0 4px;
+  }
+  .jstep-body p { margin: 0; color: var(--ink-soft); font-size: 0.9rem; max-width: 62ch; }
+  .jstep-tag {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--ink-soft);
+    margin-bottom: 2px;
+  }
+  .jstep.branch .jstep-tag { color: var(--safety); }
+
+  /* ---------- Section 3: Architecture — layer bands ---------- */
+
+  .layers { display: flex; flex-direction: column; gap: 0; }
+  .layer {
+    border: 1px solid var(--ink);
+    border-top: none;
+    background: var(--paper-raise);
+    padding: 16px 20px;
+    position: relative;
+  }
+  .layer:first-child { border-top: 1px solid var(--ink); }
+  .layer-head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .layer-head .ltag {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    background: var(--ink);
+    color: var(--paper);
+    padding: 1px 7px;
+  }
+  .layer-head h3 { font-family: var(--display); font-size: 1.05rem; margin: 0; }
+  .layer-head .lwhy { font-size: 0.8rem; color: var(--ink-soft); margin-left: auto; text-align: right; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    background: var(--steel-tint);
+    color: var(--steel-deep);
+    padding: 4px 9px;
+    border: 1px solid transparent;
+  }
+  .chip.warn { background: var(--warn-tint); color: var(--warn); }
+  .chip.note { background: transparent; color: var(--ink-soft); border: 1px dashed var(--line); font-style: italic; }
+
+  .layer-connector {
+    display: flex;
+    justify-content: center;
+    color: var(--line);
+    font-size: 0.9rem;
+    line-height: 1;
+    background: var(--paper-raise);
+    border-left: 1px solid var(--ink);
+    border-right: 1px solid var(--ink);
+    padding: 2px 0;
+  }
+  .layer-connector span { color: var(--steel); }
+
+  /* ---------- Section 4: Features ---------- */
+
+  .feat-group-label {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--ink-soft);
+    margin: 30px 0 12px;
+  }
+  .feat-group-label:first-child { margin-top: 0; }
+
+  .feat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    gap: 12px;
+  }
+  .feat-card {
+    border: 1px solid var(--line);
+    background: var(--paper-raise);
+    padding: 15px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .feat-card .fnum {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--steel);
+    font-weight: 700;
+  }
+  .feat-card h4 { font-family: var(--display); font-size: 0.98rem; margin: 0; }
+  .feat-card p { margin: 0; font-size: 0.83rem; color: var(--ink-soft); }
+  .feat-card .ftags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+  .ftag {
+    font-family: var(--mono);
+    font-size: 0.64rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 2px 6px;
+    background: var(--safety-tint);
+    color: var(--safety);
+  }
+  .ftag.ok { background: var(--success-tint); color: var(--success); }
+
+  footer.docfoot {
+    margin-top: 70px;
+    padding-top: 18px;
+    border-top: 1px solid var(--line);
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--ink-soft);
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  @media (max-width: 640px) {
+    .titleblock { grid-template-columns: 1fr; }
+    .titleblock-main { border-right: none; border-bottom: 1.5px solid var(--ink); }
+    .titleblock-meta div { min-width: 0; }
+    .sec-sub { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <div class="titleblock">
+    <div class="titleblock-main">
+      <div class="mark"><span></span><span></span></div>
+      <div class="titleblock-text">
+        <h1>METALMAN AUTO-ENGINEER</h1>
+        <p>Functional Architecture — Lights-Out Engineering Automation</p>
+      </div>
+    </div>
+    <div class="titleblock-meta">
+      <div><span class="k">Doc Type</span><span class="v">Functional Architecture</span></div>
+      <div><span class="k">Rev</span><span class="v">1.0</span></div>
+      <div><span class="k">Date</span><span class="v">2026-07-08</span></div>
+    </div>
+  </div>
+
+  <nav class="secnav">
+    <div class="secnav-inner">
+      <a href="#dataflow">01 · Data Flow</a>
+      <a href="#journey">02 · User Journey</a>
+      <a href="#architecture">03 · Overall Architecture</a>
+      <a href="#features">04 · Features</a>
+    </div>
+  </nav>
+
+  <!-- ============================================================ -->
+  <!-- 1. DATA FLOW -->
+  <!-- ============================================================ -->
+  <section class="doc-section" id="dataflow">
+    <div class="sec-head">
+      <span class="sec-num">01</span>
+      <h2>Data Flow</h2>
+      <span class="sec-sub">source files → generated documents</span>
+    </div>
+    <p class="lede">Three source files enter through the Dashboard; a single background pipeline (<code>process_engineering_task</code>) walks through every requested output in a fixed order, writing a progress percentage after each stage. The table below reads like the PFD tables this same pipeline produces.</p>
+
+    <div class="flow-scroll">
+      <table class="flow">
+        <thead>
+          <tr>
+            <th style="width:8%">Progress</th>
+            <th style="width:20%">Stage</th>
+            <th style="width:47%">What happens</th>
+            <th style="width:25%">Engine</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="milestone">
+            <td class="pct">IN</td>
+            <td class="stage-name">Source upload</td>
+            <td class="stage-desc">Feasibility Matrix (.xlsx), Master Assembly (.stp), and Technical Drawings (.pdf) are posted to <code>/api/analyze</code> and saved per-task under <code>/uploads/{task_id}_*</code>.</td>
+            <td><span class="engine-tag">FastAPI UploadFile</span></td>
+          </tr>
+          <tr>
+            <td class="pct">5%</td>
+            <td class="stage-name">Part-no. resolution</td>
+            <td class="stage-desc">Master part number is read from the filename (8–9 digit regex), falling back to the Feasibility sheet's "Part No" column.</td>
+            <td><span class="engine-tag">regex + pandas</span></td>
+          </tr>
+          <tr>
+            <td class="pct">15%</td>
+            <td class="stage-name">Geometry export</td>
+            <td class="stage-desc">Master STEP assembly is exported to STL and streamed to the browser as a live 3D wireframe during processing.</td>
+            <td><span class="engine-tag">CadQuery</span></td>
+          </tr>
+          <tr>
+            <td class="pct">20–45%</td>
+            <td class="stage-name">Bill of Materials</td>
+            <td class="stage-desc">Each feasibility row is matched to its PDF drawing; a vision model crops the isometric view, OpenCV strips the background, and the cleaned image is centered into the BOM template cell.</td>
+            <td><span class="engine-tag ai">Ollama / Gemini</span><span class="engine-tag">OpenCV</span><span class="engine-tag">openpyxl</span></td>
+          </tr>
+          <tr>
+            <td class="pct">60–90%</td>
+            <td class="stage-name">Process Flow Diagram</td>
+            <td class="stage-desc">Four sheets in sequence — Sub‑Assy Index (per‑operation STEP slices rendered to PNG), Sub‑Assy Flow, Sheetmetal Flow, BOP List — each inheriting sub‑assembly references from the operation before it.</td>
+            <td><span class="engine-tag">CadQuery / OCP</span><span class="engine-tag">openpyxl</span></td>
+          </tr>
+          <tr>
+            <td class="pct">92–95%</td>
+            <td class="stage-name">Fixture Master List</td>
+            <td class="stage-desc">Fixture rows plus the fixture photos already embedded in the feasibility workbook are matched by fuzzy row search and injected.</td>
+            <td><span class="engine-tag">openpyxl</span></td>
+          </tr>
+          <tr>
+            <td class="pct">97%</td>
+            <td class="stage-name">Fitment Checksheet</td>
+            <td class="stage-desc">Reuses the part crops already extracted during the BOM stage — no second AI pass.</td>
+            <td><span class="engine-tag">openpyxl</span></td>
+          </tr>
+          <tr>
+            <td class="pct">98%</td>
+            <td class="stage-name">Process FMEA</td>
+            <td class="stage-desc">Assembly / Sheet‑Metal / BOP sheets filled from a dictionary‑driven template.</td>
+            <td><span class="engine-tag">openpyxl</span></td>
+          </tr>
+          <tr>
+            <td class="pct">99%</td>
+            <td class="stage-name">Control Plan</td>
+            <td class="stage-desc">Re‑extracts sub‑assembly data from the PFD stage to keep both documents in lock‑step.</td>
+            <td><span class="engine-tag">openpyxl</span></td>
+          </tr>
+          <tr>
+            <td class="pct">99.5%</td>
+            <td class="stage-name">Fixture PM Master Plan</td>
+            <td class="stage-desc">Day‑wise (1–31) preventive‑maintenance schedule generated from the fixture list.</td>
+            <td><span class="engine-tag">openpyxl</span></td>
+          </tr>
+          <tr class="milestone">
+            <td class="pct">100%</td>
+            <td class="stage-name">Output registered</td>
+            <td class="stage-desc">Every generated file is appended to the task's <code>files[]</code> list, polled by the browser via <code>/api/status/{task_id}</code> every 1.5s.</td>
+            <td><span class="engine-tag">tasks_db.json</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="flow-legend"><span><span class="dot"></span>Sequential stage</span><span><span class="engine-tag ai" style="margin:0">AI</span> = vision model in the loop</span><span>Every stage writes its own <code>.xlsx</code>; nothing is generated twice</span></p>
+
+    <div class="loop-note">
+      <strong>After generation, three read/write paths loop back onto the same output file</strong> — <strong>Preview</strong> (Excel COM renders a true‑extent PDF, cached by file mtime), <strong>Edit in Excel</strong> (opens the live file in place via <code>os.startfile</code>, saves overwrite it directly), and <strong>Correct</strong> (<code>/api/correct</code> patches one cell in an already‑generated file without re‑running the pipeline).
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- 2. USER JOURNEY -->
+  <!-- ============================================================ -->
+  <section class="doc-section" id="journey">
+    <div class="sec-head">
+      <span class="sec-num">02</span>
+      <h2>User Journey</h2>
+      <span class="sec-sub">screen by screen</span>
+    </div>
+    <p class="lede">The golden path is linear — upload, select, generate, collect. Two branches (dashed) exist for touching up a result after the fact, without re‑running anything.</p>
+
+    <div class="journey">
+      <div class="jstep">
+        <div class="jstep-badge">1</div>
+        <div class="jstep-body">
+          <span class="jstep-tag">Landing / Login</span>
+          <h3>Sign in</h3>
+          <p>Marketing landing page → <code>/login</code>. Credentials post to <code>/api/auth/token</code>, which returns a JWT (8‑hour expiry) and a role (<code>Admin</code> / <code>Engineer</code>). The token gates client‑side routes only — it isn't yet checked by the generation endpoints themselves.</p>
+        </div>
+      </div>
+      <div class="jstep">
+        <div class="jstep-badge">2</div>
+        <div class="jstep-body">
+          <span class="jstep-tag">Dashboard — Step 1</span>
+          <h3>Upload source files</h3>
+          <p>Feasibility Matrix, Master Assembly STEP, and (optionally) Technical Drawing PDFs.</p>
+        </div>
+      </div>
+      <div class="jstep">
+        <div class="jstep-badge">3</div>
+        <div class="jstep-body">
+          <span class="jstep-tag">Dashboard — Step 2</span>
+          <h3>Choose what to generate</h3>
+          <p>Seven output documents, each toggled independently — only the requested ones run through the pipeline.</p>
+        </div>
+      </div>
+      <div class="jstep">
+        <div class="jstep-badge">4</div>
+        <div class="jstep-body">
+          <span class="jstep-tag">Processing View</span>
+          <h3>Watch it run</h3>
+          <p>A live 3D wireframe of the STL, a progress bar, and a seven‑stage checklist that lights up as each threshold percentage is crossed.</p>
+        </div>
+      </div>
+      <div class="jstep">
+        <div class="jstep-badge">5</div>
+        <div class="jstep-body">
+          <span class="jstep-tag">Completion</span>
+          <h3>Collect the documents</h3>
+          <p>One card per generated file — <em>Preview</em> opens the high‑fidelity modal, <em>Get File</em> downloads it directly.</p>
+        </div>
+      </div>
+      <div class="jstep">
+        <div class="jstep-badge">6</div>
+        <div class="jstep-body">
+          <span class="jstep-tag">Preview Modal</span>
+          <h3>Look, edit, or download</h3>
+          <p>A true‑fidelity PDF renders in‑page; <em>Edit in Excel</em> pops the real file open in desktop Excel for hands‑on changes, <em>Download</em> grabs the raw <code>.xlsx</code>.</p>
+        </div>
+      </div>
+      <div class="jstep branch">
+        <div class="jstep-badge">7</div>
+        <div class="jstep-body">
+          <span class="jstep-tag">Branch · Document Correction</span>
+          <h3>Fix one field without a re‑run</h3>
+          <p>A dedicated page: pick the document, the column, the row — patch the value and save. Useful for a typo that doesn't warrant regenerating an entire BOM.</p>
+        </div>
+      </div>
+      <div class="jstep branch">
+        <div class="jstep-badge">8</div>
+        <div class="jstep-body">
+          <span class="jstep-tag">Branch · Cropper</span>
+          <h3>Manual capture tool</h3>
+          <p>A standalone PDF‑region cropper that appends each capture to a running "welding sheet" workbook — independent of the main generation pipeline.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- 3. OVERALL ARCHITECTURE -->
+  <!-- ============================================================ -->
+  <section class="doc-section" id="architecture">
+    <div class="sec-head">
+      <span class="sec-num">03</span>
+      <h2>Overall Architecture</h2>
+      <span class="sec-sub">client to disk, six layers</span>
+    </div>
+    <p class="lede">A single FastAPI process fronts everything. There's no queue or worker fleet — <code>process_engineering_task</code> runs in‑process as a FastAPI background task, which is why the whole design assumes one server on one machine.</p>
+
+    <div class="layers">
+      <div class="layer">
+        <div class="layer-head"><span class="ltag">CLIENT</span><h3>React SPA</h3><span class="lwhy">Vite + TypeScript + Tailwind / shadcn‑ui</span></div>
+        <div class="chips">
+          <span class="chip">Landing</span><span class="chip">Login</span><span class="chip">Dashboard</span>
+          <span class="chip">Processing View</span><span class="chip">Preview Modal</span>
+          <span class="chip">Correction</span><span class="chip">Cropper</span><span class="chip">Stitch Demo</span>
+        </div>
+      </div>
+      <div class="layer-connector">▼</div>
+
+      <div class="layer">
+        <div class="layer-head"><span class="ltag">API</span><h3>FastAPI (main.py)</h3><span class="lwhy">CORS open · one process, one port</span></div>
+        <div class="chips">
+          <span class="chip">/api/* — routes.py</span><span class="chip">/api/auth/* — auth.py</span>
+          <span class="chip">static: /outputs</span><span class="chip">static: /stitch-demo</span>
+        </div>
+      </div>
+      <div class="layer-connector">▼</div>
+
+      <div class="layer">
+        <div class="layer-head"><span class="ltag">AUTH + DATA</span><h3>Identity</h3><span class="lwhy">issued, not yet enforced on generation routes</span></div>
+        <div class="chips">
+          <span class="chip">JWT · python‑jose · 8h expiry</span><span class="chip">passlib · pbkdf2_sha256</span>
+          <span class="chip">SQLAlchemy → metalman.db</span><span class="chip">User / Role / Permission</span>
+        </div>
+      </div>
+      <div class="layer-connector">▼</div>
+
+      <div class="layer">
+        <div class="layer-head"><span class="ltag">ORCHESTRATION</span><h3>process_engineering_task</h3><span class="lwhy">FastAPI BackgroundTasks, in‑process</span></div>
+        <div class="chips">
+          <span class="chip">TASKS dict (in‑memory)</span><span class="chip">tasks_db.json (persisted)</span>
+          <span class="chip">/api/status polling, 1.5s</span>
+        </div>
+      </div>
+      <div class="layer-connector">▼</div>
+
+      <div class="layer">
+        <div class="layer-head"><span class="ltag">SERVICES</span><h3>Document generators</h3><span class="lwhy">one module per output type</span></div>
+        <div class="chips">
+          <span class="chip">bom_generator</span><span class="chip">pfd_renderer</span><span class="chip">tooling_generator</span>
+          <span class="chip">fitment_generator</span><span class="chip">pfmea_generator</span>
+          <span class="chip">control_plan_generator</span><span class="chip">fixture_plan_generator</span>
+          <span class="chip">correction_service</span>
+        </div>
+      </div>
+      <div class="layer-connector">▼</div>
+
+      <div class="layer">
+        <div class="layer-head"><span class="ltag">ENGINES</span><h3>External / native</h3><span class="lwhy">the parts that aren't pure Python</span></div>
+        <div class="chips">
+          <span class="chip">CadQuery + OCP</span><span class="chip ai">Ollama (local) / Gemini (cloud)</span>
+          <span class="chip">OpenCV</span>
+          <span class="chip warn">pywin32 Excel COM — Windows + Excel required</span>
+        </div>
+      </div>
+      <div class="layer-connector">▼</div>
+
+      <div class="layer">
+        <div class="layer-head"><span class="ltag">STORAGE</span><h3>Filesystem + SQLite</h3><span class="lwhy">no object storage, no external DB</span></div>
+        <div class="chips">
+          <span class="chip">/uploads/{task_id}_*</span><span class="chip">/outputs/*.xlsx · *.stl · *.pdf</span>
+          <span class="chip">tasks_db.json</span><span class="chip">metalman.db (SQLite)</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- 4. FEATURES -->
+  <!-- ============================================================ -->
+  <section class="doc-section" id="features">
+    <div class="sec-head">
+      <span class="sec-num">04</span>
+      <h2>Features</h2>
+      <span class="sec-sub">what it actually produces</span>
+    </div>
+
+    <p class="feat-group-label">Generated documents</p>
+    <div class="feat-grid">
+      <div class="feat-card">
+        <span class="fnum">01</span>
+        <h4>Bill of Materials</h4>
+        <p>Consolidated part list for NPD costing and procurement, with AI‑extracted isometric part photos.</p>
+        <div class="ftags"><span class="ftag">AI vision</span></div>
+      </div>
+      <div class="feat-card">
+        <span class="fnum">02</span>
+        <h4>Process Flow Diagram</h4>
+        <p>Sequential manufacturing routing across 4 sheets, for PPAP approval.</p>
+        <div class="ftags"><span class="ftag ok">CAD‑rendered</span></div>
+      </div>
+      <div class="feat-card">
+        <span class="fnum">03</span>
+        <h4>Fixture Master List</h4>
+        <p>Complete inventory of jigs, fixtures, and shop‑floor tooling, with embedded fixture photos.</p>
+      </div>
+      <div class="feat-card">
+        <span class="fnum">04</span>
+        <h4>Fitment Checksheet</h4>
+        <p>Part fitment verification with reused part images and BOM data.</p>
+      </div>
+      <div class="feat-card">
+        <span class="fnum">05</span>
+        <h4>Process FMEA</h4>
+        <p>Failure Mode &amp; Effects Analysis across Assembly, Sheet‑Metal, and BOP sheets.</p>
+      </div>
+      <div class="feat-card">
+        <span class="fnum">06</span>
+        <h4>Control Plan</h4>
+        <p>Contractual control plan spanning Sub‑Assy Index, Assembly, Sheet‑Metal, and BOP.</p>
+      </div>
+      <div class="feat-card">
+        <span class="fnum">07</span>
+        <h4>Fixture PM Master Plan</h4>
+        <p>Monthly preventive‑maintenance schedule with day‑wise tracking (1–31).</p>
+      </div>
+    </div>
+
+    <p class="feat-group-label">Supporting capabilities</p>
+    <div class="feat-grid">
+      <div class="feat-card">
+        <h4>Live 3D preview</h4>
+        <p>STL wireframe streams into the browser while the pipeline is still running.</p>
+      </div>
+      <div class="feat-card">
+        <h4>High‑fidelity preview</h4>
+        <p>Excel‑rendered PDF with an auto‑computed true print area, cached by file mtime.</p>
+        <div class="ftags"><span class="ftag">Windows + Excel</span></div>
+      </div>
+      <div class="feat-card">
+        <h4>Edit in Excel</h4>
+        <p>Opens the live output file directly in desktop Excel — saves land on the same file the app tracks.</p>
+        <div class="ftags"><span class="ftag">Windows + Excel</span></div>
+      </div>
+      <div class="feat-card">
+        <h4>Document Correction</h4>
+        <p>Patch a single cell in an already‑generated document without regenerating it.</p>
+      </div>
+      <div class="feat-card">
+        <h4>PDF Cropper</h4>
+        <p>Manual region‑capture tool that appends crops to a running welding‑sheet workbook.</p>
+      </div>
+      <div class="feat-card">
+        <h4>Swappable vision model</h4>
+        <p>Ollama for local/dev, Gemini for deployments where Ollama isn't reachable — same call signature either way.</p>
+        <div class="ftags"><span class="ftag">AI vision</span></div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="docfoot">
+    <span>METALMAN AUTO‑ENGINEER · FUNCTIONAL ARCHITECTURE</span>
+    <span>REV 1.0 · 2026‑07‑08</span>
+  </footer>
+
+</div>
+</body>
+</html>

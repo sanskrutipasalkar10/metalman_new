@@ -1,0 +1,23 @@
+services:
+  backend:
+    image: ghcr.io/sanskrutipasalkar10/metalman-backend:latest
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      - DATABASE_URL=sqlite:////data/metalman.db
+    volumes:
+      - backend_data:/data
+    ports:
+      - "8000:8000"
+
+  frontend:
+    image: ghcr.io/sanskrutipasalkar10/metalman-frontend:latest
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+
+volumes:
+  backend_data:

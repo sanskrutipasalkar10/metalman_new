@@ -12,7 +12,7 @@ import { API_BASE } from "@/lib/api";
 
 const OUTPUTS = [
   { id: "bom",          label: "Bill of Materials (BOM)",        desc: "Consolidated list of parts for NPD costing and procurement" },
-  { id: "pfd",          label: "Progressive Flow Diagram (PFD)", desc: "Sequential manufacturing workflow for PPAP approval" },
+  { id: "pfd",          label: "Process Flow Diagram (PFD)", desc: "Sequential manufacturing workflow for PPAP approval" },
   { id: "tooling",      label: "Fixture Master List",            desc: "Complete inventory of jigs, fixtures, and shop floor tooling" },
   { id: "fitment",      label: "Fitment Checksheet",             desc: "Part fitment verification sheet with part images and BOM data" },
   { id: "pfmea",        label: "Process FMEA (All Sheets)",      desc: "Failure Mode & Effects Analysis for Assembly, SM & BOP" },

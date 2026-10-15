@@ -17,4 +17,5 @@ xlsx2html
 sqlalchemy
 passlib[bcrypt]
 python-jose[cryptography]
-cadquery==2.7.0
+cadquery==2.7.0
+pywin32; sys_platform == "win32"

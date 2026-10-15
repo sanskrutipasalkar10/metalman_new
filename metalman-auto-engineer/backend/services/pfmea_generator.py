@@ -3,8 +3,11 @@ import re
 import copy
 import os
 import math
+import datetime
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+from utils.part_info import extract_program_code
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIG & CONSTANTS
@@ -271,7 +274,20 @@ def parse_feasibility_assembly(path: str):
             current_op = None
     return operations
 
-def process_generic_sheet(ws_out, ws_src, pfmea_dict, min_row_pt):
+def _inject_pfmea_header_info(ws_out, part_no=None, part_desc=None):
+    """Overwrite the header cells that otherwise carry stale sample data from the
+    template on every run: project code, part no, part description, review date."""
+    if part_desc:
+        ws_out.cell(row=3, column=5).value = extract_program_code(part_desc)
+    if part_no:
+        ws_out.cell(row=3, column=9).value = f"Componenet Part No:- {part_no}"
+    if part_desc:
+        ws_out.cell(row=4, column=9).value = f"Component Description:-{part_desc}"
+    today = datetime.datetime.now().strftime("%d-%m-%Y")
+    ws_out.cell(row=5, column=12).value = f"PFMEA Last Review Date : {today}"
+
+
+def process_generic_sheet(ws_out, ws_src, pfmea_dict, min_row_pt, part_no=None, part_desc=None):
     # 1. Header
     HEADER_END = 10
     for col, dim in ws_src.column_dimensions.items():
@@ -286,13 +302,15 @@ def process_generic_sheet(ws_out, ws_src, pfmea_dict, min_row_pt):
     for m in ws_src.merged_cells.ranges:
         if m.max_row <= HEADER_END:
             ws_out.merge_cells(str(m))
-    
+
     if hasattr(ws_src, "_images"):
         for img in ws_src._images:
             new_img = copy.copy(img)
             new_img.anchor = img.anchor
             ws_out.add_image(new_img)
-    
+
+    _inject_pfmea_header_info(ws_out, part_no, part_desc)
+
     # 2. Blocks
     blocks = []
     for i, (proc_key, failure_modes) in enumerate(pfmea_dict.items()):
@@ -383,7 +401,7 @@ def process_generic_sheet(ws_out, ws_src, pfmea_dict, min_row_pt):
             if m.min_row >= abbrev_row:
                 safe_merge(ws_out, m.min_row + offset, m.min_col, m.max_row + offset, m.max_col)
 
-def process_assembly_sheet(ws_out, ws_src, feasibility_path, dict_path):
+def process_assembly_sheet(ws_out, ws_src, feasibility_path, dict_path, part_no=None, part_desc=None):
     if not os.path.exists(dict_path): return
     with open(dict_path, encoding="utf-8") as fh: pfmea_raw = json.load(fh)
     pfmea_indexed = index_pfmea_data(pfmea_raw)
@@ -413,6 +431,8 @@ def process_assembly_sheet(ws_out, ws_src, feasibility_path, dict_path):
     if hasattr(ws_src, "_images"):
         for img in ws_src._images:
             new_img = copy.copy(img); new_img.anchor = img.anchor; ws_out.add_image(new_img)
+
+    _inject_pfmea_header_info(ws_out, part_no, part_desc)
 
     # Operations
     current_row = HEADER_ROWS + 1
@@ -456,7 +476,7 @@ def process_assembly_sheet(ws_out, ws_src, feasibility_path, dict_path):
                 if merge.min_row == r: ws_out.merge_cells(start_row=current_row, start_column=merge.min_col, end_row=current_row + (merge.max_row - merge.min_row), end_column=merge.max_col)
             current_row += 1
 
-def generate_pfmea_excel(feasibility_path, template_path, output_path, dict_dir):
+def generate_pfmea_excel(feasibility_path, template_path, output_path, dict_dir, part_no=None, part_desc=None):
     wb_tmpl = openpyxl.load_workbook(template_path)
     wb_out = openpyxl.Workbook()
     default_sheet = wb_out.active; wb_out.remove(default_sheet)
@@ -465,22 +485,22 @@ def generate_pfmea_excel(feasibility_path, template_path, output_path, dict_dir)
     if "Assembly PFMEA" in wb_tmpl.sheetnames:
         ws_asm_out = wb_out.create_sheet("Assembly PFMEA"); ws_asm_src = wb_tmpl["Assembly PFMEA"]
         asm_dict_path = os.path.join(dict_dir, "assembly", "pfmea_assembly_dict_op2.json")
-        process_assembly_sheet(ws_asm_out, ws_asm_src, feasibility_path, asm_dict_path)
-    
+        process_assembly_sheet(ws_asm_out, ws_asm_src, feasibility_path, asm_dict_path, part_no=part_no, part_desc=part_desc)
+
     # 2. Sheetmetal
     if "Sheet Metal Parts PFMEA" in wb_tmpl.sheetnames:
         ws_sm_out = wb_out.create_sheet("Sheet Metal Parts PFMEA"); ws_sm_src = wb_tmpl["Sheet Metal Parts PFMEA"]
         sm_dict_path = os.path.join(dict_dir, "sheetmetal", "pfmea_sheet_metal_part_dict.json")
         if os.path.exists(sm_dict_path):
             with open(sm_dict_path, encoding="utf-8") as f: sm_dict = json.load(f)
-            process_generic_sheet(ws_sm_out, ws_sm_src, sm_dict, MIN_ROW_PT_SM)
-    
+            process_generic_sheet(ws_sm_out, ws_sm_src, sm_dict, MIN_ROW_PT_SM, part_no=part_no, part_desc=part_desc)
+
     # 3. BOP
     if "BOP Parts PFMEA" in wb_tmpl.sheetnames:
         ws_bop_out = wb_out.create_sheet("BOP Parts PFMEA"); ws_bop_src = wb_tmpl["BOP Parts PFMEA"]
         bop_dict_path = os.path.join(dict_dir, "bop", "pfmea_bop_dict.json")
         if os.path.exists(bop_dict_path):
             with open(bop_dict_path, encoding="utf-8") as f: bop_dict = json.load(f)
-            process_generic_sheet(ws_bop_out, ws_bop_src, bop_dict, MIN_ROW_PT_BOP)
+            process_generic_sheet(ws_bop_out, ws_bop_src, bop_dict, MIN_ROW_PT_BOP, part_no=part_no, part_desc=part_desc)
 
     wb_out.save(output_path); return True

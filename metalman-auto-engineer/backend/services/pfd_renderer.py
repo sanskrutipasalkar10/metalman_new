@@ -10,7 +10,7 @@ from openpyxl.drawing.image import Image as ExcelImage
 import cv2
 import numpy as np
 from openpyxl.styles import PatternFill, Font
-from utils.image_utils import fit_image_dimensions
+from utils.image_utils import fit_image_dimensions, place_image_centered
 
 # Standard process symbol color (Soft Green) - Increased size for visibility
 GREEN_FONT = Font(color='00B050', bold=True, size=28)
@@ -167,7 +167,7 @@ def extract_feasibility_data(filepath):
     
     # 1. First Pass: Map raw parts per operation
     raw_parts_df = df.dropna(subset=[part_no_col]).copy()
-    raw_parts_df.loc[:, part_no_col] = raw_parts_df[part_no_col].astype(str).str.replace('.0', '', regex=False).str.strip()
+    raw_parts_df[part_no_col] = raw_parts_df[part_no_col].astype(str).str.replace('.0', '', regex=False).str.strip()
     raw_parts_df = raw_parts_df[raw_parts_df[part_no_col].str.lower() != 'nan']
     raw_parts_df = raw_parts_df[raw_parts_df[part_no_col] != '']
     
@@ -578,13 +578,11 @@ def write_sub_assy_index(assy_data, pfd_template, pfd_output, output_dir):
         image_path = os.path.join(output_dir, f"{safe_stage_name}.png")
         
         if os.path.exists(image_path):
-            img = ExcelImage(image_path)
             sheet.row_dimensions[current_row].height = 168
             sheet.column_dimensions['F'].width = 40
             # Larger fit box so tall portrait crops aren't squeezed thin -
             # aspect ratio is still preserved, they just fill more of the cell.
-            img.width, img.height = fit_image_dimensions(image_path, 210, 220)
-            sheet.add_image(img, f'F{current_row}')
+            place_image_centered(sheet, image_path, f'F{current_row}', 210, 220)
         else:
             sheet.row_dimensions[current_row].height = 25 
 
@@ -727,7 +725,7 @@ def _classify_row_process(desc_text):
         return 'store'
     return 'operation'  # default
 
-def render_sub_assy_sheet(feasibility_file, pfd_template, pfd_output):
+def render_sub_assy_sheet(feasibility_file, pfd_template, pfd_output, part_no=None, part_desc=None):
     """SHEET 2 ORCHESTRATOR"""
     TARGET_SHEET = "SUB_ASSY"
     PARTS_TARGET_COL = 'H'
@@ -740,7 +738,9 @@ def render_sub_assy_sheet(feasibility_file, pfd_template, pfd_output):
         'store':     u'\u25BC',   # ▼ filled triangle
     }
 
-    part_num, part_desc, rev = extract_level_0_headers(feasibility_file)
+    part_num, part_desc_extracted, rev = extract_level_0_headers(feasibility_file)
+    part_num = part_no if part_no else part_num
+    part_desc = part_desc if part_desc else part_desc_extracted
     operation_map = extract_fixture_mapping_from_feasibility(feasibility_file)
     if not operation_map:
         return {"status": "error", "message": "Failed to map operations."}
@@ -878,14 +878,18 @@ def extract_and_segregate_sheetmetal(feasibility_file):
     except Exception as e:
         return None
 
-def render_sheetmetal_sheet(feasibility_file, pfd_template, pfd_output):
+def render_sheetmetal_sheet(feasibility_file, pfd_template, pfd_output, part_no=None, part_desc=None):
     """SHEET 3 ORCHESTRATOR"""
     SM_SHEET_NAME = "Q-SHEETMETAL_PARTS"
     TARGET_LIST_COL = 'H' 
     
     # Dynamically extract headers
-    part_num, part_desc, rev = extract_level_0_headers(feasibility_file)
-    HEADER_PART_DESC = part_desc if part_desc else "ASSEMBLY"
+    part_num, part_desc_extracted, rev = extract_level_0_headers(feasibility_file)
+    if part_no:
+        part_num = part_no
+    if part_desc:
+        part_desc_extracted = part_desc
+    HEADER_PART_DESC = part_desc_extracted if part_desc_extracted else "ASSEMBLY"
     HEADER_PART_NUM = part_num if part_num else "UNKNOWN"
     HEADER_REV_NUM = f'Revision Number :- "{rev}"' if rev else 'Revision Number :- "0"'
 
@@ -1022,7 +1026,7 @@ def extract_bop_parts(feasibility_xlsx):
     except Exception:
         return []
 
-def render_bop_sheet(feasibility_file, pfd_template, pfd_output):
+def render_bop_sheet(feasibility_file, pfd_template, pfd_output, part_no=None, part_desc=None):
     """SHEET 4 ORCHESTRATOR"""
     BOP_SHEET_NAME = "T - BOP & Hardwares"
     L0_DESC_CELL = 'C5'
@@ -1034,7 +1038,9 @@ def render_bop_sheet(feasibility_file, pfd_template, pfd_output):
         'inspection': u'\u25A0', 'store': u'\u25BC',
     }
 
-    part_num, part_desc, rev = extract_level_0_headers(feasibility_file)
+    part_num, part_desc_extracted, rev = extract_level_0_headers(feasibility_file)
+    part_num = part_no if part_no else part_num
+    part_desc = part_desc if part_desc else part_desc_extracted
     all_bom_parts = extract_bop_parts(feasibility_file)
     
     bop_keywords = ['HARDWARE', 'BOP', 'FASTENER', 'BOUGHT OUT', 'STANDARD']

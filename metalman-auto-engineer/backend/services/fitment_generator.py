@@ -24,6 +24,8 @@ from openpyxl.drawing.image import Image as ExcelImage
 from openpyxl.drawing.spreadsheet_drawing import AnchorMarker, OneCellAnchor, XDRPositiveSize2D
 from openpyxl.styles import Alignment
 
+from utils.part_info import extract_program_code
+
 
 # ==========================================
 # UTILITIES: PLACEMENT & COORDINATES
@@ -107,6 +109,8 @@ def generate_fitment_check_sheet(
     template_path: str,
     output_path: str,
     image_dir: str,
+    part_no: str = None,
+    part_desc: str = None,
 ) -> bool:
     """
     Generates the Fitment Checksheet Excel from the feasibility data and part images.
@@ -128,6 +132,10 @@ def generate_fitment_check_sheet(
 
     # ── Extract data ──────────────────────────────────────────────────────────
     bom_data, main_no, main_desc = _extract_feasibility_data(feasibility_file)
+    if part_no:
+        main_no = part_no
+    if part_desc:
+        main_desc = part_desc
     if not bom_data:
         print("[fitment_generator] WARNING: No BOM rows extracted. Skipping generation.")
         return False
@@ -143,7 +151,7 @@ def generate_fitment_check_sheet(
         # ── A. Fill Header ───────────────────────────────────────────────────
         today = datetime.datetime.now().strftime("%d-%m-%Y")
         _update_header_safe(ws, "C3", "Final Assy")
-        _update_header_safe(ws, "C4", "952-NX")
+        _update_header_safe(ws, "C4", extract_program_code(main_desc))
         _update_header_safe(ws, "C5", main_desc)
         _update_header_safe(ws, "C6", main_no)
         _update_header_safe(ws, "J4", today)

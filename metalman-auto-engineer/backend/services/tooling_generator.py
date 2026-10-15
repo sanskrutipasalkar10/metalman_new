@@ -4,6 +4,7 @@ from openpyxl.drawing.image import Image as ExcelImage
 import re
 import os
 import shutil
+import datetime
 
 # ==========================================
 # TOOLING GENERATION SERVICE (ORIGINAL LOGIC)
@@ -67,7 +68,7 @@ def extract_images_from_feasibility(filepath, image_dir):
             
     return fixture_image_map
 
-def generate_tooling_list(feasibility_file, template_path, output_path, image_dir):
+def generate_tooling_list(feasibility_file, template_path, output_path, image_dir, part_no=None, part_desc=None):
     print(f"\n Extracting Tabular Data from: {feasibility_file} ...", flush=True)
     os.makedirs(image_dir, exist_ok=True)
     
@@ -98,11 +99,16 @@ def generate_tooling_list(feasibility_file, template_path, output_path, image_di
     
     match = re.search(r'\d{8,9}', os.path.basename(feasibility_file))
     model_no = match.group(0) if match else "UNKNOWN"
-    
+
     main_part_name = "UNKNOWN"
     if not df_fixtures.empty:
         main_part_name = str(df_fixtures.iloc[-1].get(part_name_col, '')).strip()
-    
+
+    if part_no:
+        model_no = part_no
+    if part_desc:
+        main_part_name = part_desc
+
     print(f" Extracted Header Data - Model No: {model_no} | Line: {main_part_name}", flush=True)
     
     tooling_data = []
@@ -146,7 +152,17 @@ def generate_tooling_list(feasibility_file, template_path, output_path, image_di
             sheet[f'A{row}'] = f"Model No :{model_no}"
         elif "LINE :" in cell_val or "LINE:" in cell_val:
             sheet[f'A{row}'] = f"LINE : {main_part_name}"
-            
+
+    # Fill the Revision Date field (previously left blank on every run)
+    today = datetime.datetime.now().strftime("%d-%m-%Y")
+    for row in range(1, 15):
+        for col in range(1, sheet.max_column + 1):
+            cell = sheet.cell(row=row, column=col)
+            cell_val = str(cell.value).strip() if cell.value else ""
+            if ("REVISON DATE" in cell_val.upper() or "REVISION DATE" in cell_val.upper()) and today not in cell_val:
+                cell.value = f"{cell_val} {today}"
+
+
     start_row = 8 
     for row in range(1, 20):
         if str(sheet[f'A{row}'].value).strip() == "Sr.No.":
